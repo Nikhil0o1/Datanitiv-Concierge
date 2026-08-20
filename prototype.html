@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datanitiv CAP-ABILITY — Planning Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Fraunces:ital,opsz,wght@1,9..144,400;1,9..144,500&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --amber:#F5B01A; --amber-d:#8A6100; --amber-m:#FAD277; --amber-s:#FEF4DC;
+  --ink:#1C1B18; --bg:#FFFFFF; --surf:#FAF9F6; --surf2:#F2F0EA; --line:#E8E5DD; --line2:#D2CDC1;
+  --text:#1C1B18; --muted:#6B665D; --dim:#9A948A;
+  --pos:#2E7D5B; --pos-s:#E9F5EF; --neg:#C4463C; --neg-s:#FBEDEB; --warn:#B57A11; --warn-s:#FDF3E0;
+  --blue:#3B6FB5; --blue-s:#EAF1FA;
+  --fd:"Bricolage Grotesque","Segoe UI",sans-serif;
+  --fb:"Instrument Sans","Helvetica Neue",Arial,sans-serif;
+  --fv:"Fraunces",Georgia,serif;
+  --fm:"IBM Plex Mono",ui-monospace,monospace;
+  --sh:0 1px 2px rgba(28,27,24,.05); --shm:0 6px 18px -8px rgba(28,27,24,.2); --shl:0 28px 64px -32px rgba(28,27,24,.42);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--fb);line-height:1.55;-webkit-font-smoothing:antialiased}
+h1,h2{font-family:var(--fd);font-weight:800;letter-spacing:-.032em;margin:0}
+h1{font-size:clamp(1.95rem,4.2vw,3.05rem);line-height:1.01}
+h2{font-size:clamp(1.4rem,2.4vw,1.9rem);line-height:1.08}
+p{margin:0}
+.wrap{max-width:1320px;margin:0 auto;padding:0 22px}
+.mono{font-family:var(--fm);font-size:.65rem;letter-spacing:.11em;text-transform:uppercase;color:var(--dim)}
+.lede{color:var(--muted);font-size:1rem;max-width:64ch}
+.top{position:sticky;top:0;z-index:60;background:rgba(255,255,255,.93);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1320px;margin:0 auto;padding:11px 22px;display:flex;align-items:center;gap:13px}
+.logo{height:22px;display:block}
+.top .tg{font-family:var(--fm);font-size:.62rem;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);border-left:1px solid var(--line2);padding-left:13px}
+.top .lv{margin-left:auto;display:flex;align-items:center;gap:8px;font-family:var(--fm);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--amber-d);background:var(--amber-s);border:1px solid var(--amber);border-radius:999px;padding:5px 11px}
+.top .lv i{width:6px;height:6px;border-radius:50%;background:var(--amber);animation:blip 1.6s infinite}
+@keyframes blip{0%,100%{opacity:.3}50%{opacity:1}}
+.hero{padding:38px 0 18px}
+.eyebrow{font-family:var(--fm);font-size:.64rem;letter-spacing:.2em;text-transform:uppercase;color:var(--amber-d);margin-bottom:12px}
+.hero h1{max-width:17ch;margin-bottom:13px}
+.hero h1 em{font-family:var(--fv);font-style:italic;font-weight:500;color:var(--amber-d)}
+
+/* ===== CONSOLE ===== */
+.console{margin-top:22px;border:1px solid var(--line);border-radius:17px;overflow:hidden;background:#fff;box-shadow:var(--shl);display:grid;grid-template-columns:1fr 322px}
+@media(max-width:1060px){.console{grid-template-columns:1fr}}
+.scnbar{grid-column:1/-1;display:flex;gap:5px;padding:9px 13px;border-bottom:1px solid var(--line);background:var(--surf);flex-wrap:wrap}
+.scn{display:flex;align-items:center;gap:7px;border:1px solid var(--line2);border-radius:8px;padding:6px 11px;cursor:pointer;background:#fff;color:var(--muted);font-size:.78rem;transition:.2s}
+.scn:hover{border-color:var(--amber);color:var(--ink)}
+.scn.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.scn kbd{font-family:var(--fm);font-size:.54rem;border:1px solid var(--line2);border-radius:4px;padding:1px 4px;color:var(--dim)}
+.scn.on kbd{border-color:var(--amber);color:var(--amber)}
+
+.ws{min-width:0;display:flex;flex-direction:column;pointer-events:none;user-select:none;position:relative;overflow:hidden;background:var(--surf)}
+.ws.human{pointer-events:auto;user-select:auto}
+.ws.human::after{content:"";position:absolute;inset:0;border:2px solid var(--blue);border-radius:0;pointer-events:none;z-index:30;animation:fade .4s both}
+
+.wtop{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);background:#fff;flex-wrap:wrap}
+.crumb{font-family:var(--fm);font-size:.63rem;color:var(--dim);display:flex;align-items:center;gap:7px}
+.crumb b{color:var(--ink);font-weight:600}
+.pill{font-family:var(--fm);font-size:.6rem;background:var(--amber-s);border:1px solid var(--amber-m);color:var(--amber-d);border-radius:5px;padding:2px 7px}
+.saved{margin-left:auto;display:flex;align-items:center;gap:8px;font-family:var(--fm);font-size:.62rem;background:var(--pos-s);border:1px solid #A9D9C2;color:var(--pos);border-radius:999px;padding:4px 11px;font-weight:600;transition:.3s}
+.saved.bump{transform:scale(1.06)}
+.ctrl{display:none;align-items:center;gap:7px;font-family:var(--fm);font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;background:var(--blue-s);border:1px solid var(--blue);color:var(--blue);border-radius:999px;padding:4px 11px;font-weight:600}
+.ws.human .ctrl{display:flex}
+
+/* filters */
+.filters{display:flex;gap:7px;padding:9px 16px;border-bottom:1px solid var(--line);background:#fff;flex-wrap:wrap;align-items:center}
+.sel{position:relative;border:1px solid var(--line2);border-radius:8px;background:#fff;font-size:.78rem;padding:6px 26px 6px 11px;color:var(--muted);cursor:pointer;transition:.2s;white-space:nowrap}
+.sel::after{content:"▾";position:absolute;right:9px;top:50%;transform:translateY(-50%);font-size:.6rem;color:var(--dim)}
+.sel.on{border-color:var(--amber);background:var(--amber-s);color:var(--ink);font-weight:600}
+.sel:hover{border-color:var(--amber)}
+.srch{flex:1;min-width:120px;border:1px solid var(--line2);border-radius:8px;padding:6px 11px;font-size:.78rem;color:var(--dim);background:#fff}
+.showing{font-family:var(--fm);font-size:.6rem;color:var(--dim);margin-left:auto}
+
+.pane{display:none;flex-direction:column;gap:12px;padding:15px 16px 18px;flex:1;overflow-y:auto;max-height:592px}
+.pane.on{display:flex;animation:fade .36s both}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* program group */
+.grp{background:var(--amber-s);border:1px solid var(--amber-m);border-radius:9px;padding:7px 12px;display:flex;align-items:baseline;gap:10px;font-size:.83rem;opacity:0;transform:translateY(5px);transition:.35s}
+.grp.in{opacity:1;transform:none}
+.grp b{font-family:var(--fd);font-weight:700;letter-spacing:-.02em}
+.grp span{font-family:var(--fm);font-size:.63rem;color:var(--muted)}
+.grp .nou{margin-left:auto;font-family:var(--fm);font-size:.72rem;font-weight:600}
+
+.trihead{display:flex;align-items:baseline;gap:9px;font-family:var(--fm);font-size:.59rem;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);margin-top:2px}
+.trihead b{color:var(--ink);font-size:.69rem}
+.row{display:grid;grid-template-columns:1fr 86px 104px;gap:11px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 12px;transition:.3s;opacity:0;transform:translateY(5px)}
+.row.in{opacity:1;transform:none}
+.ws.human .row{cursor:pointer}
+.ws.human .row:hover{border-color:var(--amber);box-shadow:var(--sh)}
+.row .nm{font-weight:600;font-size:.85rem;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.row .sub{font-family:var(--fm);font-size:.61rem;color:var(--dim);margin-top:2px}
+.row .v{font-family:var(--fm);font-size:.8rem;text-align:right}
+.row .v.neg{color:var(--neg);font-weight:600} .row .v.pos{color:var(--pos)}
+.row .act{font-family:var(--fm);font-size:.57rem;letter-spacing:.07em;text-transform:uppercase;border-radius:5px;padding:4px 7px;text-align:center}
+.act.dec{background:var(--neg-s);color:var(--neg)}
+.act.ok{background:var(--pos-s);color:var(--pos)}
+.act.auto{background:var(--amber-s);color:var(--amber-d)}
+.row.focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(245,176,26,.2)}
+.row.hide{display:none}
+.flag{font-family:var(--fm);font-size:.54rem;letter-spacing:.05em;text-transform:uppercase;background:var(--warn-s);color:var(--warn);border-radius:4px;padding:2px 5px}
+@media(max-width:720px){.row{grid-template-columns:1fr 96px}.row .v{display:none}}
+.fold{display:flex;align-items:center;gap:9px;background:var(--surf2);border:1px dashed var(--line2);border-radius:10px;padding:10px 13px;font-family:var(--fm);font-size:.63rem;color:var(--muted);opacity:0;transform:translateY(5px);transition:.38s}
+.fold.in{opacity:1;transform:none}
+.fold b{color:var(--ink);font-weight:600}
+.fold .n{margin-left:auto;font-size:.56rem;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+
+/* TABS */
+.tabs{display:flex;gap:3px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px 9px;align-items:center}
+.tab{font-family:var(--fm);font-size:.62rem;letter-spacing:.04em;padding:6px 10px;border-radius:6px;color:var(--dim);background:var(--surf2);transition:.25s;border:1px solid transparent;position:relative}
+.ws.human .tab{cursor:pointer}
+.ws.human .tab:hover{border-color:var(--amber);color:var(--ink)}
+.tab.shown{background:var(--amber);color:var(--ink);font-weight:600}
+.tab.done{background:var(--pos-s);color:var(--pos)}
+.tab.on{box-shadow:0 0 0 2px var(--ink)}
+.tab .dot{position:absolute;top:3px;right:4px;width:5px;height:5px;border-radius:50%;background:var(--neg)}
+.tabs .lb{font-family:var(--fm);font-size:.55rem;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);margin-right:3px}
+.tabs .peek{margin-left:auto;font-family:var(--fm);font-size:.55rem;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);border:1px dashed var(--line2);border-radius:5px;padding:3px 8px}
+
+.tp-body{display:flex;flex-direction:column;gap:12px}
+.tsec{display:none;flex-direction:column;gap:12px}
+.tsec.on{display:flex;animation:fade .3s both}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:11px;padding:13px 15px;box-shadow:var(--sh);opacity:0;transform:translateY(6px);transition:.4s}
+.card.in{opacity:1;transform:none}
+.card.warn{border-color:var(--warn);background:var(--warn-s)}
+.card.good{border-color:#A9D9C2;background:var(--pos-s)}
+.card.info{border-color:var(--blue);background:var(--blue-s)}
+.ch{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+.ch b{font-family:var(--fd);font-size:.92rem;font-weight:700;letter-spacing:-.02em}
+.ch .tag{margin-left:auto;font-family:var(--fm);font-size:.55rem;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.card p{font-size:.85rem;color:var(--muted)}
+.card p b{color:var(--ink)}
+.kpis{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:4px}
+.kpi b{font-family:var(--fm);font-size:1.02rem;font-weight:600;display:block}
+.kpi span{font-family:var(--fm);font-size:.55rem;letter-spacing:.11em;text-transform:uppercase;color:var(--dim)}
+.kpi.neg b{color:var(--neg)} .kpi.pos b{color:var(--pos)}
+
+.math{font-family:var(--fm);font-size:.74rem;display:flex;flex-direction:column;gap:4px;margin-top:9px}
+.mline{display:flex;gap:12px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.mline:last-child{border-bottom:none;border-top:1.5px solid var(--ink);margin-top:3px;padding-top:7px;font-weight:600}
+.mline span:last-child{margin-left:auto;text-align:right}
+.mline.cut span:last-child{color:var(--neg)}
+.mline.add span:last-child{color:var(--pos)}
+.strike{text-decoration:line-through;color:var(--dim)}
+
+table.fl{width:100%;border-collapse:collapse;font-size:.78rem;margin-top:6px}
+table.fl th{font-family:var(--fm);font-size:.54rem;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);text-align:right;padding:5px 7px;border-bottom:1px solid var(--line)}
+table.fl th:first-child{text-align:left}
+table.fl td{font-family:var(--fm);padding:5px 7px;text-align:right;border-bottom:1px solid var(--line)}
+table.fl td:first-child{text-align:left;color:var(--muted);font-family:var(--fb)}
+table.fl tr:last-child td{border-bottom:none;font-weight:600;border-top:1.5px solid var(--ink)}
+.pos-t{color:var(--pos)} .neg-t{color:var(--neg)}
+
+/* chart */
+.chart svg{width:100%;display:block;overflow:visible}
+.gl{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}
+.zl{stroke:var(--line2);stroke-width:1.2}
+.al{font-family:'IBM Plex Mono',monospace;font-size:9px;fill:var(--dim)}
+.bx{opacity:0;transform-box:fill-box;transform-origin:bottom;transform:scaleY(.02);transition:transform .7s cubic-bezier(.25,.85,.3,1),opacity .3s,y .5s,height .5s,fill .4s}
+.chart.on .bx{opacity:1;transform:scaleY(1)}
+.bxn{transform-origin:top}
+.mk{opacity:0;transition:opacity .5s .9s}
+.chart.on .mk{opacity:1}
+.lgd{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-family:var(--fm);font-size:.58rem;color:var(--muted)}
+.lgd i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+/* editor */
+.edit{display:flex;flex-direction:column;gap:9px;margin-top:10px;border-top:1px dashed var(--line);padding-top:11px}
+.erow{display:grid;grid-template-columns:60px 1fr 62px 78px 78px;gap:9px;align-items:center;font-family:var(--fm);font-size:.72rem}
+@media(max-width:740px){.erow{grid-template-columns:52px 1fr 56px 70px}.erow>*:nth-child(5){display:none}}
+.erow .wk{color:var(--muted)}
+.erow input[type=range]{width:100%;accent-color:var(--amber);height:4px}
+.erow input[type=number]{width:100%;border:1px solid var(--line2);border-radius:6px;padding:4px 6px;font-family:var(--fm);font-size:.72rem;text-align:right;background:#fff;color:var(--ink)}
+.erow .rq{text-align:right;color:var(--muted)}
+.erow .ou{text-align:right;font-weight:600}
+.erow.hl{background:var(--amber-s);border-radius:6px;padding:3px 5px;margin:-3px -5px}
+.enote{font-family:var(--fm);font-size:.62rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.enote b{color:var(--ink)}
+
+/* queue */
+.qcards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+@media(max-width:760px){.qcards{grid-template-columns:1fr}}
+.qc{border:1px solid var(--line);border-radius:11px;background:#fff;padding:12px 14px;display:flex;align-items:center;gap:11px;box-shadow:var(--sh)}
+.qc .ic{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;flex:none;color:#fff;font-size:.85rem}
+.qc .t{font-weight:600;font-size:.84rem;line-height:1.25}
+.qc .s{font-family:var(--fm);font-size:.58rem;color:var(--dim)}
+.qc .v{margin-left:auto;font-family:var(--fm);font-size:.92rem;font-weight:600;text-align:right}
+.selbar{display:flex;align-items:center;gap:11px;background:var(--amber-s);border:1px solid var(--amber-m);border-radius:9px;padding:8px 13px;font-size:.8rem;flex-wrap:wrap}
+.selbar b{font-family:var(--fm);color:var(--amber-d)}
+.mini{font-family:var(--fm);font-size:.65rem;border:1px solid var(--amber);border-radius:6px;padding:4px 10px;color:var(--amber-d);background:#fff}
+.ws.human .mini{cursor:pointer}
+.pkg{display:grid;grid-template-columns:24px 1fr 88px;gap:11px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 13px;opacity:0;transform:translateY(5px);transition:.35s}
+.pkg.in{opacity:1;transform:none}
+.cbx{width:19px;height:19px;border-radius:5px;border:1.6px solid var(--line2);display:grid;place-items:center;font-size:.7rem;color:#fff;background:#fff;transition:.2s}
+.ws.human .cbx{cursor:pointer}
+.pkg.tick .cbx{background:var(--amber);border-color:var(--amber);color:var(--ink)}
+.pkg.tick .cbx::after{content:"✓";font-weight:700}
+.pkg .nm{font-weight:600;font-size:.84rem;display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.pkg .sub{font-family:var(--fm);font-size:.6rem;color:var(--dim);margin-top:2px}
+.pkg .st{font-family:var(--fm);font-size:.56rem;letter-spacing:.07em;text-transform:uppercase;border-radius:5px;padding:3px 7px;text-align:center;background:var(--surf2);color:var(--muted)}
+.pkg.tick .st{background:var(--pos-s);color:var(--pos)}
+.pkg.done .st{background:var(--ink);color:#fff}
+.execbar{background:var(--ink);border-radius:12px;padding:14px 17px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;color:#fff;opacity:0;transform:translateY(6px);transition:.4s}
+.execbar.in{opacity:1;transform:none}
+.execbar .t{font-family:var(--fd);font-weight:700;font-size:.98rem}
+.execbar .s{font-size:.79rem;color:#B8B3A8;margin-top:2px}
+.execbar .btn{margin-left:auto}
+.acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.btn{font-weight:600;font-size:.81rem;border-radius:9px;padding:8px 15px;border:1px solid transparent;transition:.2s;width:fit-content}
+.ws.human .btn{cursor:pointer}
+.btn.p{background:var(--amber);color:var(--ink);box-shadow:var(--shm)}
+.btn.p.pressed{transform:scale(.97)}
+.btn.g{border-color:var(--line2);color:var(--muted);background:#fff}
+.done{display:none;align-items:center;gap:9px;font-family:var(--fm);font-size:.66rem;color:var(--pos);border:1px solid #A9D9C2;background:var(--pos-s);border-radius:9px;padding:9px 12px;margin-top:9px}
+.done.on{display:flex;animation:fade .36s both}
+
+/* ledger */
+.ledger{border:1px solid var(--ink);border-radius:12px;background:#fff;padding:14px 16px}
+.lh{display:flex;align-items:flex-start;gap:12px;margin-bottom:11px}
+.lt{font-family:var(--fd);font-weight:800;font-size:.97rem;letter-spacing:-.02em}
+.ls{font-family:var(--fm);font-size:.58rem;color:var(--muted);margin-top:2px}
+.lc{margin-left:auto;font-family:var(--fm);font-size:.53rem;letter-spacing:.12em;text-transform:uppercase;background:var(--pos);color:#fff;border-radius:999px;padding:4px 10px;white-space:nowrap}
+.lrow{display:grid;grid-template-columns:1fr 100px 62px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--line);font-size:.81rem;opacity:0;transform:translateX(-5px);transition:.35s}
+.lrow.in{opacity:1;transform:none}
+.lrow:last-of-type{border-bottom:none}
+.lrow .bar{height:7px;border-radius:4px;background:var(--surf2);overflow:hidden}
+.lrow .bar i{display:block;height:100%;width:0;background:var(--amber);transition:width .8s cubic-bezier(.25,.85,.3,1)}
+.lrow .hr{font-family:var(--fm);font-size:.76rem;text-align:right;font-weight:600}
+.ltot{display:flex;align-items:baseline;gap:12px;border-top:1.5px solid var(--ink);margin-top:8px;padding-top:10px}
+.ltot b{font-family:var(--fm);font-size:1.35rem;font-weight:600;color:var(--pos)}
+.ltot span{font-family:var(--fm);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.ltot .rem{margin-left:auto;text-align:right}
+.ltot .rem b{color:var(--ink);font-size:1.1rem}
+
+.mem{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;gap:11px;align-items:flex-start;background:#fff;transition:.4s}
+.mem.cite{border-color:var(--amber);background:var(--amber-s);box-shadow:0 0 0 3px rgba(245,176,26,.16)}
+.mem .k{font-family:var(--fv);font-style:italic;font-weight:500;font-size:.92rem}
+.mem .s{font-family:var(--fm);font-size:.56rem;color:var(--dim);margin-top:3px}
+.mem .w{margin-left:auto;font-family:var(--fm);font-size:.55rem;color:var(--dim);text-align:right;flex:none}
+.mem .w b{display:block;color:var(--ink);font-weight:600;font-size:.65rem}
+.memlist{display:flex;flex-direction:column;gap:7px}
+
+/* cursor */
+.cur{position:absolute;left:0;top:0;width:23px;height:23px;z-index:40;pointer-events:none;opacity:0;transform:translate(50px,50px);transition:transform .82s cubic-bezier(.35,.02,.2,1),opacity .3s}
+.cur.on{opacity:1}
+.cur svg{width:100%;height:100%;filter:drop-shadow(0 3px 6px rgba(28,27,24,.35))}
+.rip{position:absolute;border-radius:50%;border:2px solid var(--amber);pointer-events:none;z-index:39;transform:translate(-50%,-50%);animation:rp .6s ease-out forwards}
+@keyframes rp{from{opacity:.85;width:8px;height:8px}to{opacity:0;width:66px;height:66px}}
+.aim{box-shadow:0 0 0 2px var(--amber),0 0 0 6px var(--amber-s)!important}
+
+/* agent */
+.agent{border-left:1px solid var(--line);background:var(--surf);display:flex;flex-direction:column;min-width:0}
+@media(max-width:1060px){.agent{border-left:none;border-top:1px solid var(--line);order:-1}}
+.ahead{padding:18px 16px 14px;text-align:center;border-bottom:1px solid var(--line);background:#fff}
+.orb{position:relative;width:98px;height:98px;margin:0 auto}
+.ring{position:absolute;inset:-7px;border-radius:50%;border:2px solid var(--amber);opacity:0}
+.ring.r2{inset:-14px;border-width:1px}
+.agent.talk .ring{animation:rg 1.5s ease-out infinite}
+.agent.talk .ring.r2{animation-delay:.4s}
+@keyframes rg{0%{transform:scale(.94);opacity:.5}100%{transform:scale(1.25);opacity:0}}
+.face{width:98px;height:98px;border-radius:50%;overflow:hidden;background:linear-gradient(165deg,#FDF6E6,#F7E6BF);border:3px solid #fff;box-shadow:var(--shm)}
+.face svg{width:100%;height:100%;display:block}
+.lid{transform-origin:center;transform:scaleY(0)}
+.agent.blink .lid{animation:bk .22s ease-in-out}
+@keyframes bk{0%,100%{transform:scaleY(0)}50%{transform:scaleY(1)}}
+.anm{font-family:var(--fd);font-weight:800;font-size:1.04rem;letter-spacing:-.025em;margin-top:10px}
+.arl{font-family:var(--fm);font-size:.54rem;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-top:2px}
+.wv{display:flex;align-items:flex-end;justify-content:center;gap:3px;height:14px;margin-top:9px}
+.wv i{width:3px;border-radius:2px;background:var(--amber);height:3px;opacity:.28}
+.agent.hear .wv i,.agent.talk .wv i{animation:wav .72s ease-in-out infinite;opacity:1}
+.wv i:nth-child(2){animation-delay:.09s}.wv i:nth-child(3){animation-delay:.18s}.wv i:nth-child(4){animation-delay:.27s}
+.wv i:nth-child(5){animation-delay:.36s}.wv i:nth-child(6){animation-delay:.14s}.wv i:nth-child(7){animation-delay:.23s}
+@keyframes wav{0%,100%{height:3px}50%{height:13px}}
+.ast{font-family:var(--fm);font-size:.56rem;letter-spacing:.12em;text-transform:uppercase;color:var(--amber-d);margin-top:7px;min-height:13px}
+.agent.idle .ast{color:var(--blue)}
+.bub{margin:13px 13px 0;border:1px solid var(--amber);background:var(--amber-s);border-radius:12px;padding:12px 14px;font-family:var(--fv);font-style:italic;font-weight:500;font-size:.98rem;line-height:1.47;color:var(--ink)}
+.bub:empty{display:none}
+.tl{flex:1;padding:12px 13px 13px;display:flex;flex-direction:column;gap:9px;overflow-y:auto;max-height:258px}
+.tl>*{flex:none}
+.tl:empty::after{content:"Press play. The agent speaks first.";font-family:var(--fm);font-size:.6rem;letter-spacing:.06em;color:var(--dim);text-transform:uppercase;line-height:1.7}
+.m{display:flex;flex-direction:column;gap:4px;animation:fade .36s both}
+.m .tg{font-family:var(--fm);font-size:.53rem;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);display:flex;align-items:center;gap:6px}
+.m .tg b{width:6px;height:6px;border-radius:50%}
+.m.u .bd{font-size:.85rem;background:#fff;border:1px solid var(--line);border-radius:12px 12px 12px 3px;padding:8px 11px;box-shadow:var(--sh)}
+.m.a .bd{font-family:var(--fm);font-size:.64rem;color:var(--muted);border-left:2px solid var(--amber);padding-left:9px}
+.m.d .bd{font-family:var(--fm);font-size:.64rem;color:var(--neg);border-left:2px solid var(--neg);padding-left:9px}
+.m.s .bd{font-family:var(--fm);font-size:.64rem;color:var(--blue);border-left:2px solid var(--blue);padding-left:9px}
+
+.tp{grid-column:1/-1;display:flex;align-items:center;gap:11px;padding:10px 15px;border-top:1px solid var(--line);background:var(--surf);flex-wrap:wrap}
+.tb{width:36px;height:36px;border-radius:9px;border:1px solid var(--line2);background:#fff;color:var(--ink);display:grid;place-items:center;cursor:pointer;transition:.2s;flex:none}
+.tb:hover{border-color:var(--amber);color:var(--amber-d)}
+.tb svg{width:14px;height:14px;pointer-events:none}
+.tb.play{background:var(--amber);border-color:var(--amber);width:42px;height:42px;box-shadow:var(--shm)}
+.tb.play:hover{background:#E0A012}
+.tb:disabled{opacity:.4;cursor:default}
+.trk{flex:1;min-width:130px;display:flex;flex-direction:column;gap:6px}
+.tks{display:flex;gap:3px}
+.tks i{height:5px;flex:1;border-radius:3px;background:var(--surf2);transition:.3s}
+.tks i.done{background:var(--amber-m)} .tks i.now{background:var(--amber)}
+.tmt{display:flex;justify-content:space-between;font-family:var(--fm);font-size:.57rem;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+.sp{font-family:var(--fm);font-size:.59rem;border:1px solid var(--line2);border-radius:7px;padding:5px 8px;background:#fff;color:var(--muted);cursor:pointer}
+.sp.on{border-color:var(--ink);color:var(--ink);background:var(--amber-s);font-weight:600}
+
+section{padding:66px 0}
+.tint{background:var(--surf);border-block:1px solid var(--line)}
+.sh{max-width:64ch;margin-bottom:24px;display:flex;flex-direction:column;gap:11px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}
+@media(max-width:980px){.g4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.g4{grid-template-columns:1fr}}
+.gc{border:1px solid var(--line);border-radius:12px;padding:15px;background:#fff;box-shadow:var(--sh);display:flex;flex-direction:column;gap:6px}
+.gc .n{font-family:var(--fm);font-size:.56rem;letter-spacing:.13em;color:var(--amber-d)}
+.gc h3{font-family:var(--fd);font-size:.94rem;font-weight:700;letter-spacing:-.015em;margin:0}
+.gc p{font-size:.83rem;color:var(--muted)}
+.gc .big{font-family:var(--fm);font-size:1.45rem;font-weight:600;letter-spacing:-.02em}
+footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--dim);font-size:.79rem}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <img class="logo" alt="Datanitiv" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMQAAAAtCAMAAADGMzQTAAAByFBMVEUAAAAkJCQiISIiIiIgICAiIiIhISEiIiIfHx8iIiIiIiIiISEiISEiIiIiISIjIyP3vAD8vgAhISEhISEiIiIhISEkICAiIiIiIiIiISEhICAZGRkiIiIiIiIiISH/vgYiIiIiISIiIiIhISEiISEiISEhISEiISH5vAAiISEiISEhISEjIyMjIyP40QD5wgD5wAD6tgAiIiIiIiL5yAAiIiInJyf/wAD5yAAiIiL6ugAiISIiIiL/vwAiIiIiISEiISEiIiIjIyMiIiL+/fkiIiIiIiL41AD5wgAiISIiISEhICAjICH4zQD5xQD6twD6sQD40AD5wgAiIiIiIiL5wgD5zQD6twD94Ij97a74wQD4yQAfHx/U1NT62lmmpaX4yhX4ywD//fz//Oz5tQD//Oz6yAAiIiIjICH////5vQD6uQD5vgD5wgD5wAD6swD5xQD41QD40gD40AD5xwD6uwD4ywD4xAD4wgD4wAD6tQD6uAD6twD4zgD5yQD3zQDKycl9e3z50yrw8PCzsrOlpKV5eHj74XMwLS74zQDe3t7+99z+99r+9tCUk5P85o5vbW5qaGj621lZV1hNS0z620pDQEH4yRDa4BjTAAAAZ3RSTlMAGvPTN5h7qilu49+HB/ssGRWKRehTpVhOsi8K92hbCNfQzCYSkO7bwr66cTIh3crGwoQ9PRYNDNPIxp0dEOvEooBfQv71pY2NdmNH9tfPxsLXz7c0knduIO1sMRDn3dHOvJhfVk8zi0z9DAAABptJREFUaN7dmHlfEkEYx4cVRaQFKUhuQa4Q6DIti7I0LbX7vu9aFSFLU0jM7vs+327Ps8zsLLEEH+2i3x/s8DA783xnnueZUfJTtd68efMQqXPVO0T7yZMnr9U7hHW+cPdg3UOk5wv/CcTduzc3kPqVNZ2eR4i7dQ6RPthaqATRKEmSjvzrst5Jp7e2Fgp/HmJX75DWyKtisdGlQcz/eYg2GNlQbu4RJEnoqe10OH78+IkixMSdO1tb04XCEiF0LpdLXApEE4wcoI7DGCFqTkqgIKlFm6cyuSMUYgIh5ueXCLECOliWAmHxSFITjSAYw8jsHZLUQapq06ZNN2QIbJ0FiAmASP9xCJLs7yIaEG673V09kmZmZrZsnstljmzP57PrrJN/B4KLQ9Su9nsyxNzUke2ZLEJMAgRkd51B3JMh5g5sz7CdQIg1RK3UgH1AVw4hulY5XO6fQ4SOOUaTpFziMYdDLy4fYu3atZfbZ+/d27J5ZmrqwPZcRt6JyfWtUKLUEPYOCdU7WgqhHxJku2mEyIoLgmCG74PwPEb79MfQIpn79IQqCL+2Ed02+d3Bxm42GJiHCTkGDw/84IFnHO1+QeilP28kiqKC0ECbi4sv9rfPzsoQsBNTufw6a7YcYqfE1KiCELdJihpcaBmWuIo+N3dwi4HuWDO0vQ6BmU0pCgHtJnww0WLVAqPj0wRd4cE7AxJWIrKwsIAQfCcy66z5LEJMqCBkZ82mQAQXSIEQO9Hsdzr9uNQ2NBptNhs6twOeCdlfG77SYehswb5ODtFpBrvfJKFiJRAJeBcnEuBpVEPsAmOCUK0sHh63b99eSxYWZYhZgJiZgZ2Yy8FOZPMIMaFA2BEhrMN50G+EYIMG5KKYwOXeppUTAfiyMyVHFTrmYBBIb8dTbYUZN41DlOUEhwiCcYUSTXh4UIhp3IkXAHHq47NnF05BiVpnhRJVCoGr6OXFiUL0DML20njW4dVAVENw/CHa9mFAcYheeiKH0bWaIEivJEWpzUU73LqFENOLh9sXZx+eHkftfvcNIfKwE5OTCoSDBQJKDDCILjY7Y9OXQ6ykZuaMTYGI6Ajlx9iqDcLL42kjxEY3h5je377wZfc41euHAJHJIsTkGlVWd2mcE243L61GsNrLIUR1HwxFBSKsmAUIytogQmZl2Rok6ShhELenpw+3PwQGpleXrJlcZn1rlkP4IVGrHXYYK21VDjsD/CAyiJWE8OFNtUEQJ8YTSw9fEeIWhXgzrtJp61wGIPJZBiFi/agI0T3g88bj8aGfQQQd/UboE9CGaKgdAlPMRS+8grsE4vq4WrtPTeVysBPZ/BoetNu0Ic41+SUubQhL4w7WYdkQYgQOB3qx3UlQe/bsOSF/XBkv0dW9e/ee2Y4fRNm6sCaEA9yrBrESS+jyIfjkUfonxmjRsJrqfCnERWZHp+gbjVoQdvQvutE3mrBYhssh+DEZi9sHXBZL5/IhuorxFGd1juwbo7pfCvGW2ek8IaywGhAh2Adz288T24GYQZbYy4cgJjme+pTYiDJnH5dCPGD2YfqiB2qgBoSXH4EVIY4CZ4r8Ogg8H/xEx8+LPubs01KIr8w+QmhHLAXlEEPYqAIxCCcz+ZUQQRzciyRFrWbOPn+kZrg/xuQg3Csjvwwy32OwyiKzejUhekoicbk5wa4eG2NKP+JTvH2grrCfFTMe63ROfgdOCgzCqbpSdNs4hPqyCanfQpT8ALmrQfAEHtaEMEJvGDVJv4bMirtPOMN7xcjz4Ci/xqUaJAbRBI2OYpi5ohJPkH5o9vN/VGAiokY89M1aIFJ4+dWECMklu49v7xjfCxpRLz9xWxNhSuL8Df3BlH5FhF/FU4O4Q8Yuvc8JA5euYosjmdCh52iPtSUGjAFJlqUaBC8mHm+wuZlDMDnZetHZxrieP318//6TDxK3REL8RTs/scx9CEHzgCumOkyov3Y6JZOA2+KoESIsyQqXQ9gl4AupoMYqihfY0rM5Yh/hRclnY/55daq8GRjkEO4w4/cnjOhVjRDdpkoQYgSLBVfzvsoMUZGo1b2rwQNr2RQieoPBwBaiZ1fMJnkCu7qh8oK5h9VBZ4u0o1dPJ9nWIUiRoyMQldBFThAdNHz8YmIwhIuvgdlO2NCNfrMQwLDBoRGZKW4wDBCVfBUZhGZSJsSqbtXu8zu1ohKEg9SRtCn22UldqU0jL1pcpM7U/GONModDpP7U1WlWZfTOJKlPnfPt7Ivui/g7G0dFUk/6DvTmYZWDzglvAAAAAElFTkSuQmCC">
+    <span class="tg">CAP-ABILITY · Planning agent</span>
+    <span class="lv"><i></i>Week of Aug 02, 2026</span>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Live CAP portfolio · 11 plans · 3 programs · real numbers</div>
+    <h1>The agent reads. <em>You decide, and it counts the hours back.</em></h1>
+    <p class="lede">Eighty-three screens across eleven plans before a single decision gets made. The agent reads all of them, opens with the three that matter, and keeps every other tab one click away. When you want the mouse, say so and it steps aside.</p>
+
+    <div class="console" id="console">
+      <div class="scnbar" id="scnbar"></div>
+      <div class="ws" id="ws">
+        <div id="wsIn"></div>
+        <div class="cur" id="cur"><svg viewBox="0 0 24 24" fill="#F5B01A" stroke="#1C1B18" stroke-width="1.4"><path d="M5 2l14 9-6 1.2L9.6 19z"/></svg></div>
+      </div>
+      <aside class="agent" id="agent">
+        <div class="ahead">
+          <div class="orb"><div class="ring"></div><div class="ring r2"></div><div class="face" id="face"></div></div>
+          <div class="anm">Vera</div>
+          <div class="arl">Planning agent</div>
+          <div class="wv"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="ast" id="ast">Standing by</div>
+        </div>
+        <div class="bub" id="bub"></div>
+        <div class="tl" id="tl"></div>
+      </aside>
+      <div class="tp">
+        <button class="tb" id="bR" title="Restart (R)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></button>
+        <button class="tb play" id="bP" title="Play / pause (space)"><svg viewBox="0 0 24 24" fill="currentColor" id="pIc"><path d="M6 4l14 8-14 8z"/></svg></button>
+        <button class="tb" id="bS" title="Step (right arrow)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l9 7-9 7z"/><path d="M18 5v14"/></svg></button>
+        <div class="trk"><div class="tks" id="tks"></div><div class="tmt"><span id="sLb">Ready</span><span id="sCt">0 / 0</span></div></div>
+        <button class="sp on" data-sp="1">1x</button>
+        <button class="sp" data-sp="1.6">1.6x</button>
+        <button class="sp" data-sp="2.4">2.4x</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="tint">
+  <div class="wrap">
+    <div class="sh">
+      <div class="eyebrow">Nothing is taken away</div>
+      <h2>Every tab is still there. It just is not the first thing you see.</h2>
+      <p class="lede">Overview, Headcount, New Hire, Shrinkage, Attrition, Recommend, Execute — all seven stay one click away for every CAP ID, with the full flow tables and charts. The agent marks the ones that change your decision and leaves the rest for whenever you want to look.</p>
+    </div>
+    <div class="g4">
+      <div class="gc"><div class="n">PEEK</div><h3>All 7 tabs, always</h3><p>Open any step on any plan. The agent's picks are highlighted; the others are one click, not hidden.</p></div>
+      <div class="gc"><div class="n">EDIT</div><h3>Voice or mouse</h3><p>Say a number and the chart redraws. Or take the mouse and drag the sliders yourself — same maths either way.</p></div>
+      <div class="gc"><div class="n">APPROVE</div><h3>You tick every line</h3><p>Overtime hours, cross-plan loans and requisitions queue up. Nothing posts to CAP-ABILITY until you execute.</p></div>
+      <div class="gc"><div class="n">COUNT</div><h3>Hours back, itemised</h3><p>Reading, donor matching, roster reconciliation — the ledger shows what the agent absorbed and what is left for you.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer><div class="wrap"><p style="max-width:64ch">Demonstration built on the live CAP planning portfolio (week of 08/02/2026). Plan names, CAP IDs, FTE positions, shrinkage, attrition, headcount flows and roster-class figures are taken from that dataset; shrinkage recalculation uses the platform's own formula, requirement = billable ÷ (1 − shrinkage). Hour savings are illustrative estimates, not measured results.</p></div></footer>
+
+<script>
+(function(){
+"use strict";
+var DATA=[{"plan": "FTE for coverage", "capId": "CAP00349", "site": "ABQ1-", "lob": "CSS", "region": "AMERICAS", "planner": "Mohit Shah", "program": "RT Healthcare", "vertical": "Healthcare", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": true, "ou": -3.82, "sustained": 2.73, "minOUfwd": -3.88, "closingFTE": 3.42, "availHrs": 40.0, "shrink12": 26.34, "attr12": 0.97, "sOU": [37.66, 15.22, 13.02, 9.58, -4.62, -7.65, -7.17, -2.79, -2.72, 19.21, 19.21, -3.48, -3.82, -3.88, 8.51, 6.0, 3.8, 6.04, 4.17, 2.44, 2.42, 2.39, 2.37, 2.35, 2.32], "sShrink": [23.32, 29.73, 30.0, 23.32, 29.73, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 30.01, 31.03, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5], "sShrinkPlan": [23.5, 23.5, 23.5, 23.5, 23.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 30.01, 31.03, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5, 25.5], "cls": null, "hcCur": {"opening": 3.46, "nest": 0.0, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 0.04, "promo": 0.0, "closing": 3.42}, "sProj": [37.66, 15.22, 13.02, 15.87, 6.53, 3.5, 3.98, 3.5, 3.57, 25.5, 25.5, 2.81, 2.47, 2.41, 8.51, 6.0, 3.8, 6.04, 4.17, 2.44, 2.42, 2.39, 2.37, 2.35, 2.32], "sReq": [0.0, 0.0, 0.0, 6.29, 11.15, 11.15, 11.15, 6.29, 6.29, 6.29, 6.29, 6.29, 6.29, 6.29, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}, {"plan": "CP FTE Based", "capId": "CAP00010", "site": "ABQ1-", "lob": "CSS", "region": "AMERICAS", "planner": "Mohit Shah", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": false, "ou": 0.0, "sustained": -9.1, "minOUfwd": -22.46, "closingFTE": 50.0, "availHrs": 40.0, "shrink12": 20.58, "attr12": 0.0, "sOU": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.96, -2.96, -2.96, -2.96, -2.96, -2.96, -2.96, -21.95, -21.71, -22.38, -22.46, -22.53], "sShrink": [48.0, 46.0, 45.0, 48.0, 48.0, 49.0, 42.0, 45.0, 43.0, 49.0, 56.0, 50.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 49.0, 49.0, 50.0, 51.0, 51.0], "sShrinkPlan": [48.0, 46.0, 45.0, 48.0, 48.0, 49.0, 42.0, 45.0, 43.0, 49.0, 56.0, 50.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 49.0, 49.0, 50.0, 51.0, 51.0], "cls": {"date": "07/19/26", "wkRel": -2, "plan": 2.5, "actual": 0.0, "trainHC": 2.42, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 50.0, "nest": 2.38, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 0.0, "promo": 0.0, "closing": 50.0}, "sProj": [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 47.04, 47.04, 47.04, 47.04, 47.04, 47.04, 47.04, 28.05, 28.29, 27.62, 27.54, 27.47], "sReq": [50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]}, {"plan": "CP_Rite_SPNVoice_2024Q1", "capId": "CAP00013", "site": "MX City", "lob": "CSS", "region": "AMERICAS", "planner": "Mohit Shah", "program": "RT Healthcare", "vertical": "Healthcare", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": false, "ou": 39.42, "sustained": 34.11, "minOUfwd": 14.63, "closingFTE": 207.84, "availHrs": 40.0, "shrink12": 16.61, "attr12": 1.5, "sOU": [8.43, 2.87, 2.32, 2.98, 0.7, -1.51, -0.9, -10.65, 0.72, 5.2, 3.22, 12.2, 39.42, 14.63, 25.68, 24.73, 15.46, 16.2, 14.97, 31.17, 42.32, 55.45, 58.44, 70.81, 68.87], "sShrink": [23.08, 25.86, 26.09, 23.08, 25.86, 25.86, 26.09, 25.85, 23.72, 31.0, 35.0, 24.18, 13.0, 1.5, 1.5, 13.0, 13.0, 13.0, 13.0, 13.0, 23.92, 23.47, 23.94, 23.97, 23.92], "sShrinkPlan": [24.18, 22.66, 22.93, 23.54, 23.93, 20.72, 20.69, 22.23, 21.93, 25.05, 24.1, 24.18, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 23.92, 23.47, 23.94, 23.97, 23.92], "cls": {"date": "08/02/26", "wkRel": 0, "plan": 30.0, "actual": 0.0, "trainHC": 29.1, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 211.0, "nest": 4.75, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 3.17, "promo": 0.0, "closing": 207.84}, "sProj": [148.43, 162.87, 162.32, 162.98, 170.7, 173.49, 174.1, 174.35, 180.72, 155.2, 153.22, 162.2, 189.42, 164.63, 175.68, 174.73, 185.46, 181.2, 179.97, 196.17, 207.32, 220.45, 223.44, 235.81, 233.87], "sReq": [140.0, 160.0, 160.0, 160.0, 170.0, 175.0, 175.0, 185.0, 180.0, 150.0, 150.0, 150.0, 150.0, 150.0, 150.0, 150.0, 170.0, 165.0, 165.0, 165.0, 165.0, 165.0, 165.0, 165.0, 165.0]}, {"plan": "Annuties  -Vol Backlog", "capId": "CAP00018", "site": "GH", "lob": "CSS", "region": "AMERICAS", "planner": "Henna Shaikh", "program": "EZ Rides", "vertical": "Rideshare", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": true, "ou": 5.96, "sustained": 0.25, "minOUfwd": -15.09, "closingFTE": 539.0, "availHrs": 40.0, "shrink12": 25.72, "attr12": 2.0, "sOU": [48.66, 54.99, 54.18, 53.55, 51.36, 20.02, 7.8, 3.76, 4.05, 7.63, 4.3, 7.75, 5.96, 4.26, 3.22, 1.92, 1.75, 2.65, 3.66, 0.82, 4.9, -1.54, -9.46, -15.09, -22.88], "sShrink": [27.63, 26.36, 26.37, 26.34, 26.73, 33.38, 35.85, 36.54, 36.44, 29.25, 29.41, 28.68, 31.51, 30.73, 29.85, 26.23, 25.71, 27.11, 26.15, 25.47, 26.46, 26.08, 26.65, 26.95, 27.13], "sShrinkPlan": [26.13, 26.13, 26.13, 26.13, 26.13, 26.13, 26.13, 26.13, 26.13, 22.63, 22.63, 25.5, 27.5, 27.5, 26.13, 24.63, 23.63, 21.63, 19.5, 27.63, 27.63, 27.63, 27.63, 27.63, 27.63], "cls": {"date": "08/23/26", "wkRel": 3, "plan": 10.0, "actual": 0.0, "trainHC": 9.7, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 550.0, "nest": 0.0, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 11.0, "promo": 0.0, "closing": 539.0}, "sProj": [413.41, 419.35, 419.26, 419.41, 417.68, 386.57, 375.01, 371.85, 372.24, 403.78, 399.48, 402.4, 400.21, 393.66, 392.19, 391.22, 395.28, 396.34, 397.78, 423.16, 414.7, 406.4, 398.27, 390.31, 382.5], "sReq": [364.75, 364.35, 365.08, 365.86, 366.32, 366.55, 367.21, 368.09, 368.2, 396.14, 395.18, 394.65, 394.25, 389.4, 388.97, 389.3, 393.53, 393.69, 394.12, 422.34, 409.8, 407.94, 407.74, 405.4, 405.38]}, {"plan": "CP_ACE_ESC_CrossUtil", "capId": "CAP00022", "site": "GGN1", "lob": "Escalation", "region": "India", "planner": "Mohit Shah", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": true, "ou": 10.41, "sustained": 1.83, "minOUfwd": -10.68, "closingFTE": 33.35, "availHrs": 40.0, "shrink12": 42.33, "attr12": 1.0, "sOU": [4.31, 2.3, 1.56, 1.7, 1.61, 7.27, 6.82, 5.22, 5.23, 5.89, 2.56, 3.26, 10.41, 6.35, 6.09, 5.83, 5.58, 5.33, 5.08, 14.09, -7.4, -10.68, -8.64, -10.03, -8.7], "sShrink": [26.81, 48.97, 49.85, 48.77, 49.55, 47.8, 44.63, 54.13, 54.21, 49.95, 49.93, 47.29, 13.0, 5.72, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 94.0, 106.0, 100.0, 104.0, 98.0], "sShrinkPlan": [102.0, 112.0, 112.0, 108.0, 106.0, 102.0, 98.0, 112.0, 96.0, 110.0, 106.0, 102.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 94.0, 106.0, 100.0, 104.0, 98.0], "cls": {"date": "07/12/26", "wkRel": -3, "plan": 2.5, "actual": 0.0, "trainHC": 2.42, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 34.35, "nest": 0.0, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 1.0, "promo": 0.0, "closing": 33.35}, "sProj": [19.75, 14.64, 13.9, 14.05, 13.96, 19.62, 19.17, 18.29, 18.3, 18.96, 18.9, 19.6, 30.02, 25.96, 25.7, 25.44, 25.19, 24.94, 24.69, 35.64, 12.21, 8.93, 10.97, 9.58, 10.91], "sReq": [15.43, 12.35, 12.35, 12.35, 12.35, 12.35, 12.35, 13.07, 13.07, 13.07, 16.34, 16.34, 19.61, 19.61, 19.61, 19.61, 19.61, 19.61, 19.61, 21.56, 19.61, 19.61, 19.61, 19.61, 19.61]}, {"plan": "volume based hybrid", "capId": "CAP00012", "site": "ABQ1-", "lob": "CSS", "region": "AMERICAS", "planner": "Jignesh Surti", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": true, "ou": 10.56, "sustained": 9.96, "minOUfwd": 4.78, "closingFTE": 32.0, "availHrs": 45.0, "shrink12": 16.83, "attr12": 1.0, "sOU": [2.98, 3.08, -1.15, 3.58, -1.8, 15.94, 15.94, 15.94, 15.94, 14.76, 14.76, 19.84, 10.56, 10.37, 11.58, 10.63, 7.4, 9.96, 12.46, 16.28, 4.78, 6.9, 8.61, 10.02, 10.68], "sShrink": [28.48, 31.51, 31.8, 28.48, 31.51, 39.0, 44.0, 35.0, 37.0, 42.0, 36.0, 43.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 43.0, 41.0, 40.0, 38.0, 38.0], "sShrinkPlan": [41.0, 47.0, 39.0, 41.0, 44.0, 39.0, 44.0, 35.0, 37.0, 42.0, 36.0, 43.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 43.0, 41.0, 40.0, 38.0, 38.0], "cls": {"date": "08/09/26", "wkRel": 1, "plan": 16.0, "actual": 0.0, "trainHC": 15.52, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 32.0, "nest": 0.0, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 0.32, "promo": 0.0, "closing": 32.0}, "sProj": [16.87, 16.97, 16.91, 16.87, 16.26, 34.0, 34.0, 34.0, 34.0, 33.0, 33.0, 32.0, 28.8, 28.61, 29.81, 28.86, 25.64, 28.19, 30.69, 34.52, 23.01, 25.14, 26.84, 28.26, 28.92], "sReq": [13.89, 13.89, 18.06, 13.29, 18.06, 18.06, 18.06, 18.06, 18.06, 18.24, 18.24, 12.16, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24, 18.24]}, {"plan": "FTE Cap Plan", "capId": "CAP00025", "site": "CEBU MAIN", "lob": "CSS", "region": "SEA", "planner": "David Jaime Ariza", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": false, "ou": 14.06, "sustained": 4.82, "minOUfwd": -0.68, "closingFTE": 42.0, "availHrs": 40.0, "shrink12": 39.42, "attr12": 5.0, "sOU": [0.55, 5.47, 0.18, -0.2, -0.2, 0.1, 3.12, 1.6, 1.13, -0.61, -0.18, 14.99, 14.06, 10.41, 10.5, 7.32, 5.48, 2.57, 3.27, 1.55, 1.7, 0.74, 0.86, -0.68, -2.69], "sShrink": [36.0, 34.0, 35.0, 34.0, 34.0, 33.0, 50.0, 54.0, 49.0, 51.0, 48.0, 7.0, 7.0, 9.0, 9.0, 9.0, 6.0, 6.0, 6.0, 6.0, 7.0, 9.0, 7.0, 7.0, 6.0], "sShrinkPlan": [47.0, 47.0, 42.0, 44.0, 45.0, 51.0, 50.0, 40.0, 37.0, 37.0, 44.0, 49.0, 19.0, 19.0, 13.0, 18.0, 48.0, 54.0, 47.0, 58.0, 50.0, 51.0, 48.0, 48.0, 55.0], "cls": {"date": "08/02/26", "wkRel": 0, "plan": 5.0, "actual": 0.0, "trainHC": 4.85, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 43.0, "nest": 0.0, "tin": 0.0, "tout": 2.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 1.0, "promo": 0.0, "closing": 42.0}, "sProj": [25.55, 30.47, 25.18, 24.8, 24.8, 25.1, 28.12, 26.6, 26.13, 24.39, 24.82, 39.99, 39.06, 35.41, 35.5, 32.32, 25.48, 22.57, 23.27, 19.55, 19.7, 18.74, 18.86, 17.32, 15.31], "sReq": [25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 25.0, 20.0, 20.0, 20.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0]}, {"plan": "Hybrid", "capId": "CAP00359", "site": "ABQ1-", "lob": "Tech Support", "region": "AMERICAS", "planner": "Ankur Walia", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": true, "ou": 0.17, "sustained": -0.31, "minOUfwd": -5.12, "closingFTE": 21.0, "availHrs": 10.0, "shrink12": 13.0, "attr12": 1.0, "sOU": [-15.25, -15.98, -16.05, -15.95, -16.65, 3.17, 3.17, 2.17, 2.17, 1.17, 1.17, 0.17, 0.17, -0.87, -1.07, 3.3, 3.06, 2.82, 2.58, 2.35, -2.96, -5.12, -3.92, -4.1, -4.05], "sShrink": [33.18, 36.54, 36.87, 33.18, 36.54, 36.0, 29.0, 30.0, 31.0, 31.0, 29.0, 34.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 27.0, 37.0, 30.0, 30.0, 29.0], "sShrinkPlan": [30.0, 35.0, 33.0, 33.0, 29.0, 36.0, 29.0, 30.0, 31.0, 31.0, 29.0, 34.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 27.0, 37.0, 30.0, 30.0, 29.0], "cls": {"date": "08/16/26", "wkRel": 2, "plan": 5.0, "actual": 0.0, "trainHC": 4.85, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 21.0, "nest": 0.0, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 0.21, "promo": 0.0, "closing": 21.0}, "sProj": [18.08, 17.36, 17.28, 17.39, 16.69, 24.0, 24.0, 23.0, 23.0, 22.0, 22.0, 21.0, 21.0, 19.97, 19.77, 24.13, 23.89, 23.65, 23.42, 23.18, 17.88, 15.71, 16.91, 16.73, 16.78], "sReq": [33.33, 33.33, 33.33, 33.33, 33.33, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83, 20.83]}, {"plan": "ACE_TS_ENG_Voice_CU", "capId": "CAP00360", "site": "ABQ1-", "lob": "Tech Support", "region": "AMERICAS", "planner": "Mohit Shah", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": true, "ou": 5.07, "sustained": 2.63, "minOUfwd": -1.29, "closingFTE": 21.0, "availHrs": 40.0, "shrink12": 12.75, "attr12": 0.0, "sOU": [8.07, 7.07, 7.07, 7.07, 7.07, 7.07, 6.07, 6.07, 6.07, 6.07, 6.07, 5.07, 5.07, 4.24, 4.24, 4.24, 4.24, 4.24, 4.24, 4.24, -1.29, -0.22, -0.4, -1.29, -1.47], "sShrink": [32.0, 33.0, 32.0, 29.0, 31.0, 34.0, 32.0, 29.0, 32.0, 35.0, 34.0, 28.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 33.0, 27.0, 28.0, 33.0, 34.0], "sShrinkPlan": [32.0, 33.0, 32.0, 29.0, 31.0, 34.0, 32.0, 29.0, 32.0, 35.0, 34.0, 28.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 33.0, 27.0, 28.0, 33.0, 34.0], "cls": {"date": "07/26/26", "wkRel": -1, "plan": 20.0, "actual": 0.0, "trainHC": 19.4, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 21.0, "nest": 0.0, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 0.0, "promo": 0.0, "closing": 21.0}, "sProj": [24.0, 23.0, 23.0, 23.0, 23.0, 23.0, 22.0, 22.0, 22.0, 22.0, 22.0, 21.0, 21.0, 20.17, 20.17, 20.17, 20.17, 20.17, 20.17, 20.17, 14.64, 15.71, 15.53, 14.64, 14.46], "sReq": [15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93, 15.93]}, {"plan": "FE Test ", "capId": "CAP00457", "site": "ABQ2", "lob": "Tech Support", "region": "AMERICAS", "planner": "David Jaime Ariza", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23"], "curIdx": 12, "isVol": false, "ou": 28.02, "sustained": 27.6, "minOUfwd": 27.18, "closingFTE": 32.25, "availHrs": 40.0, "shrink12": 35.0, "attr12": 1.0, "sOU": [31.61, 31.29, 30.98, 30.67, 30.36, 30.06, 29.76, 29.46, 29.17, 28.87, 28.59, 28.3, 28.02, 27.74, 27.46, 27.18], "sShrink": [272.0, 277.0, 276.0, 268.0, 271.0, 273.0, 261.0, 285.0, 284.0, 274.0, 277.0, 281.0, 35.0, 35.0, 35.0, 35.0], "sShrinkPlan": [272.0, 277.0, 276.0, 268.0, 271.0, 273.0, 261.0, 285.0, 284.0, 274.0, 277.0, 281.0, 35.0, 35.0, 35.0, 35.0], "cls": {"date": "07/19/26", "wkRel": -2, "plan": 5.0, "actual": 0.0, "trainHC": 4.85, "status": "missing", "trainWk": 2, "nestWk": 1}, "hcCur": {"opening": 32.25, "nest": 4.75, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 0.32, "promo": 0.0, "closing": 32.25}, "sProj": [31.61, 31.29, 30.98, 30.67, 30.36, 30.06, 29.76, 29.46, 29.17, 28.87, 28.59, 28.3, 28.02, 27.74, 27.46, 27.18], "sReq": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}, {"plan": "TPH Based", "capId": "CAP03863", "site": "ABQ1-", "lob": "CSS", "region": "AMERICAS", "planner": "Mohit Shah", "program": "ACE Retail", "vertical": "Telecom", "weeks": ["05/10", "05/17", "05/24", "05/31", "06/07", "06/14", "06/21", "06/28", "07/05", "07/12", "07/19", "07/26", "08/02", "08/09", "08/16", "08/23", "08/30", "09/06", "09/13", "09/20", "09/27", "10/04", "10/11", "10/18", "10/25"], "curIdx": 12, "isVol": false, "ou": 0.37, "sustained": -0.73, "minOUfwd": -3.67, "closingFTE": 33.0, "availHrs": 40.0, "shrink12": 1.25, "attr12": 2.0, "sOU": [5.94, 1.75, 3.24, 3.86, 4.54, 1.56, 2.89, 0.33, 2.44, 1.19, 2.69, -0.11, 0.37, 2.17, 1.54, 0.91, 0.3, -0.31, -0.89, -1.47, -2.04, -2.59, -3.14, -3.67, -4.19], "sShrink": [1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25], "sShrinkPlan": [1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25, 1.25], "cls": null, "hcCur": {"opening": 33.0, "nest": 0.0, "tin": 0.0, "tout": 0.0, "loaIn": 0.0, "loaOut": 0.0, "attr": 0.66, "promo": 0.0, "closing": 33.0}, "sProj": [35.0, 35.0, 35.0, 36.0, 35.0, 35.0, 35.0, 34.0, 34.0, 34.0, 33.0, 33.0, 33.0, 31.94, 31.3, 30.67, 30.06, 29.46, 28.87, 28.29, 27.72, 27.17, 26.63, 26.09, 25.57], "sReq": [29.06, 33.25, 31.76, 32.14, 30.46, 33.44, 32.11, 33.67, 31.56, 32.81, 30.31, 33.11, 32.63, 29.76, 29.76, 29.76, 29.76, 29.76, 29.76, 29.76, 29.76, 29.76, 29.76, 29.76, 29.76]}];
+var reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+var speed=1,snap=false,gen=0;
+function S(ms){ return new Promise(function(r){ setTimeout(r,(reduce||snap)?0:ms/speed); }); }
+function stale(g){ return g!==gen; }
+function P(i){ return document.getElementById(i); }
+function Q(s){ return document.querySelector(s); }
+function QA(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); }
+function raf2(f){ if(window.requestAnimationFrame){ window.requestAnimationFrame(function(){ window.requestAnimationFrame(f); }); } else setTimeout(f,32); }
+function f2(n){ return (Math.round(n*100)/100).toFixed(2); }
+function f1(n){ return (Math.round(n*10)/10).toFixed(1); }
+function byId(c){ return DATA.filter(function(p){ return p.capId===c; })[0]; }
+
+function statusOf(p){ var s=p.sustained; return s<=-10?'critical':s<-1?'under':s>1?'surplus':'balanced'; }
+function shrGap(p){ var i=p.curIdx, s=p.sShrink.slice(Math.max(0,i-8),i+1).filter(function(v){return v!=null;});
+  return s.length? s.reduce(function(a,b){return a+b;},0)/s.length - p.shrink12 : 0; }
+
+/* ---------- face ---------- */
+P('face').innerHTML='<svg viewBox="0 0 120 120">'+
+'<defs><linearGradient id="sk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFC7A2"/><stop offset="1" stop-color="#E09B76"/></linearGradient>'+
+'<linearGradient id="hr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3A2E22"/><stop offset="1" stop-color="#1C1B18"/></linearGradient></defs>'+
+'<path d="M18 120c0-19 19-30 42-30s42 11 42 30z" fill="#F5B01A"/><path d="M30 120c2-13 14-21 30-21s28 8 30 21z" fill="#FAD277"/>'+
+'<path d="M52 78h16v16H52z" fill="#E09B76"/><ellipse cx="60" cy="56" rx="27" ry="32" fill="url(#sk)"/>'+
+'<path d="M33 52c-2-22 12-34 27-34s29 12 27 34c-3-12-9-17-14-15-8 4-25 6-33-2-3-3-6 6-7 17z" fill="url(#hr)"/>'+
+'<path d="M46 47c3-2 8-2 11 0M63 47c3-2 8-2 11 0" stroke="#6B4A3A" stroke-width="2" fill="none" stroke-linecap="round"/>'+
+'<g><ellipse cx="51" cy="56" rx="5" ry="3.6" fill="#fff"/><circle cx="51" cy="56" r="2.5" fill="#2A2118"/><ellipse class="lid" cx="51" cy="56" rx="5.4" ry="3.9" fill="#EDAE86"/></g>'+
+'<g><ellipse cx="69" cy="56" rx="5" ry="3.6" fill="#fff"/><circle cx="69" cy="56" r="2.5" fill="#2A2118"/><ellipse class="lid" cx="69" cy="56" rx="5.4" ry="3.9" fill="#EDAE86"/></g>'+
+'<path d="M60 60v7c0 1.6-1.4 2.4-2.8 2.4" stroke="#C4826A" stroke-width="1.6" fill="none" stroke-linecap="round"/>'+
+'<ellipse id="mouth" cx="60" cy="76" rx="7" ry="2" fill="#A85A5A"/>'+
+'<ellipse cx="40" cy="65" rx="4" ry="2.6" fill="#F5B01A" opacity=".3"/><ellipse cx="80" cy="65" rx="4" ry="2.6" fill="#F5B01A" opacity=".3"/></svg>';
+var agent=P('agent'),bub=P('bub'),tl=P('tl'),curEl=P('cur'),ws=P('ws');
+setInterval(function(){ if(!reduce){ agent.classList.add('blink'); setTimeout(function(){ agent.classList.remove('blink'); },240); } },4300);
+var mt=null;
+function mouthOn(){ if(reduce)return; var m=P('mouth'); if(!m)return;
+  mt=setInterval(function(){ m.setAttribute('ry',(1.2+Math.random()*4).toFixed(1)); m.setAttribute('rx',(6+Math.random()*2).toFixed(1)); },95); }
+function mouthOff(){ clearInterval(mt); var m=P('mouth'); if(m){ m.setAttribute('ry',2); m.setAttribute('rx',7); } }
+function ast(t){ var e=P('ast'); if(e) e.textContent=t; }
+
+var HUE={u:'#1C1B18',a:'#F5B01A',d:'#C4463C',s:'#3B6FB5'};
+function push(cls,tag,text,stream){
+  var el=document.createElement('div'); el.className='m '+cls;
+  el.innerHTML='<div class="tg"><b style="background:'+HUE[cls]+'"></b>'+tag+'</div><div class="bd"></div>';
+  tl.appendChild(el); tl.scrollTop=tl.scrollHeight;
+  var b=el.querySelector('.bd');
+  if(!stream||reduce){ b.textContent=text; return Promise.resolve(); }
+  var w=text.split(' ');
+  return new Promise(function(res){ var n=0;
+    var t=setInterval(function(){ n++; b.textContent=w.slice(0,n).join(' '); tl.scrollTop=tl.scrollHeight;
+      if(n>=w.length){ clearInterval(t); res(); } },37/speed); });
+}
+var tok=0;
+function say(text){
+  var mine=++tok;
+  agent.classList.remove('hear','idle'); agent.classList.add('talk'); ast('Speaking');
+  bub.textContent=''; mouthOn();
+  var w=text.split(' '),i=0;
+  function nx(){
+    if(mine!==tok) return Promise.resolve();
+    if(i>=w.length){ mouthOff(); agent.classList.remove('talk'); ast('Standing by');
+      return push('a','Vera',text).then(function(){ return S(220); }); }
+    i++; bub.textContent=w.slice(0,i).join(' ');
+    return S(94).then(nx);
+  }
+  return nx();
+}
+function hear(ms){ agent.classList.add('hear'); ast('Listening'); bub.textContent='Listening…';
+  return S(ms).then(function(){ agent.classList.remove('hear'); ast('Standing by'); bub.textContent=''; }); }
+
+/* ---------- cursor ---------- */
+function moveTo(sel){
+  var el=Q(sel); if(!el) return Promise.resolve(null);
+  curEl.classList.add('on');
+  var a=ws.getBoundingClientRect(), r=el.getBoundingClientRect();
+  curEl.style.transitionDuration=(0.82/speed)+'s';
+  curEl.style.transform='translate('+(r.left-a.left+r.width/2-3)+'px,'+(r.top-a.top+r.height/2-3)+'px)';
+  el.classList.add('aim');
+  return S(760).then(function(){ return el; });
+}
+function ripple(){
+  var m=/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/.exec(curEl.style.transform); if(!m) return;
+  var d=document.createElement('div'); d.className='rip';
+  d.style.left=(parseFloat(m[1])+3)+'px'; d.style.top=(parseFloat(m[2])+3)+'px';
+  ws.appendChild(d); setTimeout(function(){ d.remove(); },660);
+}
+function tap(sel,log){
+  var g=gen;
+  return moveTo(sel).then(function(el){
+    if(!el||stale(g)) return null;
+    ripple();
+    return S(135).then(function(){
+      el.classList.remove('aim');
+      fire(el);
+      return log?push('a','Agent · action',log):null;
+    }).then(function(){ return S(190); });
+  });
+}
+function fire(el){
+  var a=el.getAttribute('data-act');
+  if(a) doAct(a,el);
+  var t=el.getAttribute('data-tab'); if(t) openTab(t);
+  var v=el.getAttribute('data-view'); if(v) view(v);
+  var f=el.getAttribute('data-filter'); if(f) setFilter(f,el);
+  if(el.classList.contains('pkg')||el.classList.contains('cbx')){
+    var pk=el.classList.contains('pkg')?el:el.closest('.pkg');
+    if(pk&&!pk.classList.contains('done')){ pk.classList.toggle('tick'); tally(); }
+  }
+}
+
+/* ---------- time ledger ---------- */
+var savedMin=0;
+function addTime(min,why){
+  savedMin+=min;
+  var e=P('saveTxt'); if(e){ e.textContent=hm(savedMin)+' saved'; }
+  var s=P('savedChip'); if(s){ s.classList.add('bump'); setTimeout(function(){ s.classList.remove('bump'); },320); }
+  return why?push('s','Time back','+'+hm(min)+' · '+why):Promise.resolve();
+}
+function hm(m){ var h=Math.floor(m/60), r=Math.round(m%60); return h?(h+'h '+(r<10?'0':'')+r+'m'):(r+'m'); }
+
+/* ---------- views / tabs / filters ---------- */
+function view(k){
+  QA('.pane').forEach(function(p){ p.classList.toggle('on', p.getAttribute('data-view')===k); });
+  var c=P('crumbTxt');
+  if(c) c.textContent = k==='port'?'Portfolio — grouped by Program':k==='plan'?'CP FTE Based · detailed analysis':k==='queue'?'Review & execute':'Time & memory';
+  var pl=P('crumbPill');
+  if(pl) pl.textContent = k==='plan'?'CAP00010':k==='port'?'11 plans':k==='queue'?'action queue':'ledger';
+}
+function openTab(t){
+  QA('.tab').forEach(function(x){ x.classList.toggle('on', x.getAttribute('data-tab')===t); });
+  QA('.tsec').forEach(function(x){ x.classList.toggle('on', x.getAttribute('data-sec')===t); });
+  var pk=P('peekTxt');
+  if(pk){ var e=Q('.tab[data-tab="'+t+'"]');
+    pk.textContent = e&&e.classList.contains('shown') ? 'agent picked this one' : 'peeking — agent skipped this'; }
+}
+var FILT='all';
+function setFilter(f,el){
+  FILT=f;
+  QA('.sel[data-filter]').forEach(function(s){ s.classList.toggle('on', s===el); });
+  QA('.row[data-prog]').forEach(function(r){
+    r.classList.toggle('hide', !(f==='all' || r.getAttribute('data-prog')===f));
+  });
+  var n=DATA.filter(function(p){ return f==='all'||p.program===f; }).length, tot=DATA.length;
+  QA('.grp').forEach(function(g){ g.style.display = (f==='all'||g.getAttribute('data-prog')===f)?'':'none'; });
+  var s=P('showing'); if(s) s.textContent='Showing '+n+' of '+tot;
+  var fo=P('fold1'); if(fo) fo.style.display = f==='all'?'':'none';
+}
+function doAct(a,el){
+  if(a.indexOf('go-')===0){ el.classList.add('pressed'); setTimeout(function(){ el.classList.remove('pressed'); },220); }
+  if(a==='sel-all'){ QA('.pkg').forEach(function(p){ if(!p.classList.contains('done')) p.classList.add('tick'); }); tally(); }
+  if(a==='sel-none'){ QA('.pkg').forEach(function(p){ p.classList.remove('tick'); }); tally(); }
+  if(a==='exec'){
+    QA('.pkg.tick').forEach(function(p){ p.classList.add('done'); p.querySelector('.st').textContent='Posted'; });
+    var d=P('execDone'); if(d) d.classList.add('on');
+    tally();
+  }
+}
+function tally(){
+  var t=QA('.pkg.tick').length, all=QA('.pkg').length;
+  var s=P('selCount'); if(s) s.textContent=t+' of '+all;
+  var e=P('execTitle'); if(e) e.textContent = t? ('Ready to execute '+t+' package'+(t===1?'':'s')) : 'Nothing selected';
+  var ot=0,xu=0,hr=0;
+  QA('.pkg.tick').forEach(function(p){
+    ot+=parseFloat(p.getAttribute('data-ot')||0);
+    xu+=parseFloat(p.getAttribute('data-xu')||0);
+    hr+=parseInt(p.getAttribute('data-hire')||0,10);
+  });
+  var a=P('qOT'), b=P('qXU'), c=P('qHR');
+  if(a) a.textContent=f2(ot)+' hrs';
+  if(b) b.textContent=f2(xu)+' FTE';
+  if(c) c.textContent=hr+' agents';
+  var pa=P('qOTn'), pb=P('qXUn'), pc=P('qHRn');
+  var np=QA('.pkg.tick').length;
+  if(pa) pa.textContent=QA('.pkg.tick[data-ot]').filter(function(p){return parseFloat(p.getAttribute('data-ot'))>0;}).length+' plans';
+  if(pb) pb.textContent=QA('.pkg.tick[data-xu]').filter(function(p){return parseFloat(p.getAttribute('data-xu'))>0;}).length+' donor plans';
+  if(pc) pc.textContent=QA('.pkg.tick[data-hire]').filter(function(p){return parseInt(p.getAttribute('data-hire'),10)>0;}).length+' plans';
+}
+
+/* ---------- charts ---------- */
+function ouChart(id,cap,opt){
+  var el=P(id); if(!el) return Promise.resolve();
+  opt=opt||{};
+  var p=byId(cap), i0=p.curIdx, n=Math.min(12,p.sOU.length-i0);
+  var v=opt.series||p.sOU.slice(i0,i0+n), wk=p.weeks.slice(i0,i0+n);
+  var W=600,H=168,L=44,R=10,T=12,B=24;
+  var mn=Math.min.apply(null,v.concat([0])), mx=Math.max.apply(null,v.concat([0]));
+  var pad=(mx-mn)*.16||1, lo=Math.floor((mn-pad)/5)*5, hi=Math.ceil((mx+pad)/5)*5;
+  var Y=function(x){ return T+(H-T-B)*(1-(x-lo)/(hi-lo)); };
+  var g='',yl='';
+  for(var t=0;t<=4;t++){ var vv=lo+(hi-lo)*t/4, yy=Y(vv);
+    g+='<line class="gl" x1="'+L+'" y1="'+yy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+yy.toFixed(1)+'"/>';
+    yl+='<text class="al" x="'+(L-7)+'" y="'+(yy+3).toFixed(1)+'" text-anchor="end">'+f1(vv)+'</text>'; }
+  var zy=Y(0), bw=(W-L-R)/n, bars='', xl='';
+  v.forEach(function(x,i){
+    var bx=L+bw*i+bw*.24, w=bw*.52, y=x>=0?Y(x):zy, h=Math.abs(Y(x)-zy);
+    bars+='<rect class="bx '+(x<0?'bxn':'')+'" id="'+id+'_b'+i+'" x="'+bx.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+Math.max(1.5,h).toFixed(1)+'" rx="2.5" fill="'+(x<0?'#C4463C':'#2E7D5B')+'" style="transition-delay:'+(i*.05)+'s"/>';
+    if(i%2===0||i===n-1) xl+='<text class="al" x="'+(bx+w/2).toFixed(1)+'" y="'+(H-7)+'" text-anchor="middle">'+wk[i]+'</text>';
+  });
+  var mk='';
+  if(opt.mark!=null){ var mxx=L+bw*opt.mark+bw*.5;
+    mk='<line class="mk" x1="'+mxx.toFixed(1)+'" y1="'+T+'" x2="'+mxx.toFixed(1)+'" y2="'+(H-B)+'" stroke="#F5B01A" stroke-width="2" stroke-dasharray="4 3"/>'+
+       '<text class="mk al" x="'+(mxx+5).toFixed(1)+'" y="'+(T+10)+'" fill="#8A6100" style="font-weight:600">'+(opt.lbl||'')+'</text>'; }
+  el.className='chart'; el.setAttribute('data-lo',lo); el.setAttribute('data-hi',hi);
+  el.innerHTML='<svg viewBox="0 0 '+W+' '+H+'">'+g+yl+'<line class="zl" x1="'+L+'" y1="'+zy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+zy.toFixed(1)+'"/>'+bars+mk+xl+'</svg>';
+  raf2(function(){ el.classList.add('on'); });
+  return S(620+n*50);
+}
+function shrChart(id,cap){
+  var el=P(id); if(!el) return Promise.resolve();
+  var p=byId(cap), i0=p.curIdx;
+  var hist=p.sShrink.slice(Math.max(0,i0-8),i0+1), fwd=p.sShrinkPlan.slice(i0+1,i0+12);
+  var wk=p.weeks.slice(Math.max(0,i0-8),i0+12), all=hist.concat(fwd);
+  var W=600,H=160,L=42,R=10,T=12,B=22;
+  var hi=Math.max(60,Math.ceil(Math.max.apply(null,all)/10)*10), lo=0, n=all.length, bw=(W-L-R)/n;
+  var Y=function(x){ return T+(H-T-B)*(1-(x-lo)/(hi-lo)); };
+  var g='',yl='';
+  for(var t=0;t<=3;t++){ var vv=lo+(hi-lo)*t/3, yy=Y(vv);
+    g+='<line class="gl" x1="'+L+'" y1="'+yy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+yy.toFixed(1)+'"/>';
+    yl+='<text class="al" x="'+(L-7)+'" y="'+(yy+3).toFixed(1)+'" text-anchor="end">'+Math.round(vv)+'%</text>'; }
+  var bars='',xl='';
+  all.forEach(function(x,i){
+    var bx=L+bw*i+bw*.2, w=bw*.6, y=Y(x), h=Y(lo)-y, isH=i<hist.length;
+    bars+='<rect class="bx" id="'+id+'_s'+i+'" x="'+bx.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+Math.max(1.5,h).toFixed(1)+'" rx="2" fill="'+(isH?'#B57A11':'#D2CDC1')+'" style="transition-delay:'+(i*.04)+'s"/>';
+    if(i%3===0||i===n-1) xl+='<text class="al" x="'+(bx+w/2).toFixed(1)+'" y="'+(H-6)+'" text-anchor="middle">'+(wk[i]||'')+'</text>';
+  });
+  var cy=Y(43.11), py=Y(20.58);
+  var line='<line class="mk" x1="'+L+'" y1="'+cy.toFixed(1)+'" x2="'+(W-R)+'" y2="'+cy.toFixed(1)+'" stroke="#C4463C" stroke-width="1.6" stroke-dasharray="5 4"/>'+
+    '<text class="mk al" x="'+(W-R-2)+'" y="'+(cy-5).toFixed(1)+'" text-anchor="end" fill="#C4463C" style="font-weight:600">8-wk actual 43.11%</text>'+
+    '<line class="mk" x1="'+(L+bw*hist.length).toFixed(1)+'" y1="'+py.toFixed(1)+'" x2="'+(W-R)+'" y2="'+py.toFixed(1)+'" stroke="#6B665D" stroke-width="1.6" stroke-dasharray="5 4"/>'+
+    '<text class="mk al" x="'+(W-R-2)+'" y="'+(py+12).toFixed(1)+'" text-anchor="end" fill="#6B665D" style="font-weight:600">plan 20.58%</text>';
+  el.className='chart'; el.setAttribute('data-hist',hist.length); el.setAttribute('data-hi',hi);
+  el.innerHTML='<svg viewBox="0 0 '+W+' '+H+'">'+g+yl+bars+line+xl+'</svg>';
+  raf2(function(){ el.classList.add('on'); });
+  return S(600+n*40);
+}
+
+/* ---------- LIVE SHRINKAGE EDITOR (real maths) ---------- */
+/* platform formula: requirement = billable / (1 - shrink).  billable is 50.00 for every
+   forward week of CAP00010, verified by back-solving their own published rows. */
+var BILL=50.0;
+var EW=[];               /* editable forward weeks */
+function buildEditor(){
+  var p=byId('CAP00010'), i0=p.curIdx;
+  EW=[];
+  for(var i=7;i<12;i++){
+    EW.push({ i:i, wk:p.weeks[i0+i], base:p.sShrink[i0+i], cur:p.sShrink[i0+i], proj:p.sProj[i0+i] });
+  }
+  var h='';
+  EW.forEach(function(w,k){
+    h+='<div class="erow" id="er'+k+'"><span class="wk">'+w.wk+'</span>'+
+       '<input type="range" min="0" max="70" step="0.5" value="'+w.cur+'" data-k="'+k+'">'+
+       '<input type="number" min="0" max="70" step="0.1" value="'+w.cur.toFixed(1)+'" data-k="'+k+'">'+
+       '<span class="rq" id="rq'+k+'">'+f2(reqOf(w.cur))+'</span>'+
+       '<span class="ou" id="ou'+k+'"></span></div>';
+  });
+  var e=P('editRows'); if(e) e.innerHTML=h;
+  EW.forEach(function(w,k){ paintRow(k); });
+  bindEditor();
+  netNote();
+}
+function reqOf(s){ return BILL/(1-s/100); }
+function paintRow(k){
+  var w=EW[k], req=reqOf(w.cur), ou=w.proj-req;
+  var r=P('rq'+k); if(r) r.textContent=f2(req);
+  var o=P('ou'+k); if(o){ o.textContent=f2(ou); o.className='ou '+(ou<0?'neg-t':'pos-t'); }
+}
+function bindEditor(){
+  QA('#editRows input').forEach(function(inp){
+    inp.addEventListener('input',function(){
+      var k=parseInt(inp.getAttribute('data-k'),10), v=parseFloat(inp.value);
+      if(isNaN(v)) return;
+      setWeek(k,v,true);
+    });
+  });
+}
+function setWeek(k,v,fromUser){
+  EW[k].cur=v;
+  var row=P('er'+k);
+  if(row){
+    var rg=row.querySelector('input[type=range]'), nb=row.querySelector('input[type=number]');
+    if(rg&&rg.value!=v) rg.value=v;
+    if(nb&&parseFloat(nb.value)!==v) nb.value=v.toFixed(1);
+    row.classList.add('hl'); setTimeout(function(){ row.classList.remove('hl'); },700);
+  }
+  paintRow(k); netNote(); redrawOU();
+  if(fromUser){ var s=P('editSrc'); if(s) s.textContent='edited by you'; }
+}
+function netNote(){
+  var d=0; EW.forEach(function(w){ d+=reqOf(w.cur)-reqOf(w.base); });
+  var e=P('netReq');
+  if(e){ e.textContent=(d>=0?'+':'')+f2(d)+' FTE'; e.style.color=d>0?'#C4463C':'#2E7D5B'; }
+}
+function redrawOU(){
+  var el=P('chOU'); if(!el||!el.getAttribute('data-lo')) return;
+  var lo=parseFloat(el.getAttribute('data-lo')), hi=parseFloat(el.getAttribute('data-hi'));
+  var W=600,H=168,T=12,B=24;
+  var Y=function(x){ return T+(H-T-B)*(1-(x-lo)/(hi-lo)); };
+  var zy=Y(0);
+  EW.forEach(function(w,k){
+    var b=P('chOU_b'+w.i); if(!b) return;
+    var ou=w.proj-reqOf(w.cur);
+    var y=ou>=0?Y(ou):zy, h=Math.abs(Y(ou)-zy);
+    b.setAttribute('y',y.toFixed(1)); b.setAttribute('height',Math.max(1.5,h).toFixed(1));
+    b.setAttribute('fill', ou<0?'#C4463C':'#2E7D5B');
+    b.setAttribute('class','bx '+(ou<0?'bxn':''));
+  });
+}
+function voiceSet(vals){                        /* agent applies by voice */
+  var i=0;
+  function nx(){
+    if(i>=vals.length) return S(200);
+    setWeek(vals[i][0], vals[i][1], false);
+    i++; return S(230).then(nx);
+  }
+  return nx();
+}
+
+/* ---------- triage ---------- */
+function triage(){
+  var dec=[],auto=[],quiet=[];
+  DATA.forEach(function(p){
+    var st=statusOf(p), sg=shrGap(p);
+    if(st==='under'||st==='critical'||p.minOUfwd<-6)
+      dec.push({p:p,why:(st==='under'||st==='critical')
+        ? 'Short '+f2(-p.sustained)+' FTE sustained · worst week '+f2(p.minOUfwd)
+        : 'Looks fine now · '+f2(p.minOUfwd)+' FTE by '+(p.weeks[p.curIdx+9]||'')});
+    else if(sg>10) auto.push({p:p,why:'Shrinkage plan '+f1(p.shrink12)+'% vs '+f1(p.shrink12+sg)+'% actual'});
+    else quiet.push({p:p,why:'Inside tolerance · worst week '+f2(p.minOUfwd)});
+  });
+  return {dec:dec,auto:auto,quiet:quiet};
+}
+function rowHTML(o,tag,tcls){
+  var p=o.p;
+  return '<div class="row" data-cap="'+p.capId+'" data-prog="'+p.program+'">'+
+    '<div><div class="nm">'+p.plan+(p.cls&&p.cls.status==='missing'?' <span class="flag">roster</span>':'')+'</div>'+
+    '<div class="sub">'+p.capId+' · '+p.program+' › '+p.lob+' › '+p.site.replace(/-$/,'')+' · '+o.why+'</div></div>'+
+    '<div class="v '+(p.sustained<0?'neg':'pos')+'">'+f2(p.sustained)+'</div>'+
+    '<div><span class="act '+tcls+'">'+tag+'</span></div></div>';
+}
+var T=triage();
+var PROGS=[['ACE Retail',8,68.66],['EZ Rides',1,5.96],['RT Healthcare',2,35.60]];
+
+var WS=
+'<div class="wtop"><span class="crumb"><b id="crumbTxt">Portfolio — grouped by Program</b></span>'+
+ '<span class="pill" id="crumbPill">11 plans</span>'+
+ '<span class="ctrl">◉ You have the mouse</span>'+
+ '<span class="saved" id="savedChip">⏱ <span id="saveTxt">0m saved</span></span></div>'+
+
+'<div class="filters">'+
+ '<span class="sel on" data-filter="all">All programs</span>'+
+ PROGS.map(function(g){ return '<span class="sel" data-filter="'+g[0]+'">'+g[0]+'</span>'; }).join('')+
+ '<span class="srch">Search plan / planner / site</span>'+
+ '<span class="showing" id="showing">Showing 11 of 11</span></div>'+
+
+/* ---------- PORTFOLIO ---------- */
+'<div class="pane on" data-view="port">'+
+ '<div class="trihead"><b>Needs your decision</b><span id="c1"></span></div>'+
+ '<div id="decList">'+
+  PROGS.map(function(g){
+    var rows=T.dec.filter(function(o){ return o.p.program===g[0]; });
+    if(!rows.length) return '';
+    return '<div class="grp" data-prog="'+g[0]+'"><b>'+g[0]+'</b><span>'+g[1]+' plans</span>'+
+      '<span class="nou '+(g[2]>0?'pos-t':'neg-t')+'">net O/U '+(g[2]>0?'+':'')+f2(g[2])+'</span></div>'+
+      rows.map(function(o){ return rowHTML(o,'decide','dec'); }).join('');
+  }).join('')+'</div>'+
+ '<div class="trihead"><b>Agent can handle these</b><span id="c2"></span></div>'+
+ '<div id="autoList">'+T.auto.map(function(o){ return rowHTML(o,'autopilot','auto'); }).join('')+'</div>'+
+ '<div class="fold" id="fold1"><b>'+T.quiet.length+' plans need nothing</b> — inside tolerance, no assumption moved<span class="n">folded</span></div>'+
+'</div>'+
+
+/* ---------- PLAN · ALL 7 TABS ---------- */
+'<div class="pane" data-view="plan">'+
+ '<div class="tabs"><span class="lb">7 steps</span>'+
+  '<span class="tab" data-tab="ov">Overview</span>'+
+  '<span class="tab" data-tab="hc">Headcount</span>'+
+  '<span class="tab" data-tab="nh">New Hire</span>'+
+  '<span class="tab" data-tab="shr">Shrinkage</span>'+
+  '<span class="tab" data-tab="att">Attrition</span>'+
+  '<span class="tab" data-tab="rec">Recommend</span>'+
+  '<span class="tab" data-tab="exe">Execute</span>'+
+  '<span class="peek" id="peekTxt">all tabs open</span></div>'+
+
+ '<div class="tp-body">'+
+
+ /* OVERVIEW */
+ '<div class="tsec on" data-sec="ov">'+
+  '<div class="card in"><div class="ch"><b>Plan overview</b><span class="tag">step 1</span></div>'+
+   '<div class="kpis"><div class="kpi"><b>50.00</b><span>Required</span></div>'+
+   '<div class="kpi"><b>50.00</b><span>Projected</span></div>'+
+   '<div class="kpi neg"><b>−9.10</b><span>12-wk avg O/U</span></div>'+
+   '<div class="kpi neg"><b>−22.46</b><span>Worst week</span></div></div>'+
+   '<div id="chOU" style="margin-top:11px"></div>'+
+   '<div class="lgd"><span><i style="background:#2E7D5B"></i>Covered</span><span><i style="background:#C4463C"></i>Short</span></div></div></div>'+
+
+ /* HEADCOUNT */
+ '<div class="tsec" data-sec="hc">'+
+  '<div class="card in"><div class="ch"><b>Headcount snapshot</b><span class="tag">step 2 · agent skipped</span></div>'+
+   '<p>Every movement for last week and this week. Nothing here moves the decision — which is exactly why it was folded.</p>'+
+   '<table class="fl"><thead><tr><th>Movement</th><th>Prev wk · 07/26</th><th>Current wk · 08/02</th></tr></thead><tbody>'+
+   '<tr><td>Opening FTE</td><td>50.00</td><td>50.00</td></tr>'+
+   '<tr><td>+ Nesting → Production</td><td>0.00</td><td class="pos-t">+2.38</td></tr>'+
+   '<tr><td>+ Transfer In</td><td>0.00</td><td>0.00</td></tr>'+
+   '<tr><td>− Transfer Out</td><td>0.00</td><td>0.00</td></tr>'+
+   '<tr><td>+ Back from LOA</td><td>0.00</td><td>0.00</td></tr>'+
+   '<tr><td>− Move to LOA</td><td>0.00</td><td>0.00</td></tr>'+
+   '<tr><td>− Production Attrition</td><td>0.00</td><td>0.00</td></tr>'+
+   '<tr><td>− Promotion (out)</td><td>0.00</td><td>0.00</td></tr>'+
+   '<tr><td>Closing FTE</td><td>50.00</td><td>50.00</td></tr></tbody></table></div></div>'+
+
+ /* NEW HIRE */
+ '<div class="tsec" data-sec="nh">'+
+  '<div class="card warn in"><div class="ch"><b>Roster gap — this one does matter</b><span class="tag">step 3</span></div>'+
+   '<p>Class <b>TC_2026_91020</b> ran on <b>07/19/26</b>, two weeks ago. <b>2.42 FTE</b> of trained heads are onboarded but not mapped on the employee roster, so projected FTE excludes them and the shortfall reads worse than it is.</p>'+
+   '<table class="fl" style="margin-top:9px"><thead><tr><th>Class</th><th>Train / nest</th><th>Plan HC</th><th>Onboarded</th><th>Roster</th></tr></thead><tbody>'+
+   '<tr><td>TC_2026_91020</td><td>2 wk / 1 wk</td><td>2.50</td><td class="neg-t">0.00</td><td class="neg-t">Not uploaded</td></tr></tbody></table>'+
+   '<div class="math"><div class="mline"><span>Reported 12-week gap</span><span>9.10 FTE</span></div>'+
+    '<div class="mline cut"><span>Onboarded, not on roster</span><span>−2.42 FTE</span></div>'+
+    '<div class="mline"><span>Real gap</span><span>6.68 FTE</span></div></div>'+
+   '<div class="acts"><div class="btn p" data-act="go-roster">Map the roster</div><div class="btn g">Upload file</div></div>'+
+   '<div class="done" id="doneRoster"><span>✓</span><span>2.42 FTE mapped · projected FTE corrected · gap now 6.68</span></div></div></div>'+
+
+ /* SHRINKAGE */
+ '<div class="tsec" data-sec="shr">'+
+  '<div class="card in"><div class="ch"><b>Shrinkage trend</b><span class="tag">step 4</span></div>'+
+   '<div class="kpis"><div class="kpi neg"><b>43.11%</b><span>8-wk actual</span></div>'+
+   '<div class="kpi"><b>20.58%</b><span>Planned fwd</span></div>'+
+   '<div class="kpi neg"><b>+22.53pt</b><span>Variance</span></div></div>'+
+   '<div id="chShr" style="margin-top:11px"></div>'+
+   '<div class="lgd"><span><i style="background:#B57A11"></i>Actual</span><span><i style="background:#D2CDC1"></i>Plan forward</span></div>'+
+   '<div class="edit"><div class="enote"><b>Adjust forward weeks</b> · requirement = billable ÷ (1 − shrinkage) · '+
+    '<span id="editSrc">plan values</span> · net requirement change <b id="netReq">0.00 FTE</b></div>'+
+    '<div class="erow" style="font-size:.55rem;letter-spacing:.09em;text-transform:uppercase;color:#9A948A">'+
+     '<span>Week</span><span>Shrinkage</span><span style="text-align:right">%</span><span style="text-align:right">FTE req</span><span style="text-align:right">New O/U</span></div>'+
+    '<div id="editRows"></div>'+
+    '<div class="acts"><div class="btn p" data-act="go-shrink">Submit to plan</div><div class="btn g">Reset</div></div>'+
+    '<div class="done" id="doneShr"><span>✓</span><span>Forward weeks submitted · requirement recalculated across 5 weeks</span></div>'+
+   '</div></div></div>'+
+
+ /* ATTRITION */
+ '<div class="tsec" data-sec="att">'+
+  '<div class="card in"><div class="ch"><b>Attrition trend</b><span class="tag">step 5 · agent skipped</span></div>'+
+   '<div class="kpis"><div class="kpi"><b>0.00%</b><span>8-wk actual</span></div>'+
+   '<div class="kpi"><b>0.00%</b><span>Planned</span></div>'+
+   '<div class="kpi"><b>+0.00pt</b><span>Variance</span></div></div>'+
+   '<p style="margin-top:9px">Production attrition is flat at zero on both actual and plan across the whole window. There is nothing to adjust and nothing to decide, which is why the agent left it closed.</p></div></div>'+
+
+ /* RECOMMEND */
+ '<div class="tsec" data-sec="rec">'+
+  '<div class="card good in"><div class="ch"><b>Staffing recommendation</b><span class="tag">step 6</span></div>'+
+   '<div class="math"><div class="mline"><span>Real gap after roster fix</span><span>6.68 FTE</span></div>'+
+    '<div class="mline"><span class="strike">Overtime · 100.00 hrs/wk</span><span class="strike">2.50 FTE</span></div>'+
+    '<div class="mline add"><span>Cross-util from CAP00013 · MX City</span><span>−6.68 FTE</span></div>'+
+    '<div class="mline"><span>Hire</span><span>0 starts</span></div>'+
+    '<div class="mline"><span>Residual</span><span>0.00 FTE</span></div></div>'+
+   '<p style="margin-top:9px">No overtime and no requisition. CAP00013 can lend <b>13.63</b> and still keep a full FTE of headroom in its worst forward week.</p>'+
+   '<div class="acts"><div class="btn p" data-act="go-accept">Accept &amp; queue</div><div class="btn g">Modify</div><div class="btn g">Reject</div></div>'+
+   '<div class="done" id="doneRec"><span>✓</span><span>Package accepted · added to the execution queue · nothing posted yet</span></div></div></div>'+
+
+ /* EXECUTE */
+ '<div class="tsec" data-sec="exe">'+
+  '<div class="card in"><div class="ch"><b>Execute</b><span class="tag">step 7</span></div>'+
+   '<p>This plan\u2019s package moves to the portfolio action queue, where you tick what actually posts to CAP-ABILITY. Open the queue from the top bar.</p>'+
+   '<div class="acts"><div class="btn p" data-view="queue">Open action queue</div></div></div></div>'+
+
+ '</div></div>'+
+
+/* ---------- ACTION QUEUE ---------- */
+'<div class="pane" data-view="queue">'+
+ '<div class="qcards">'+
+  '<div class="qc"><span class="ic" style="background:#3B6FB5">⏱</span><div><div class="t">Overtime authorizations</div><div class="s" id="qOTn">0 plans</div></div><span class="v" id="qOT" style="color:#3B6FB5">0.00 hrs</span></div>'+
+  '<div class="qc"><span class="ic" style="background:#2E7D5B">⇄</span><div><div class="t">Cross-util / loans</div><div class="s" id="qXUn">0 donor plans</div></div><span class="v" id="qXU" style="color:#2E7D5B">0.00 FTE</span></div>'+
+  '<div class="qc"><span class="ic" style="background:#F5B01A;color:#1C1B18">🎓</span><div><div class="t">New hire requisitions</div><div class="s" id="qHRn">0 plans</div></div><span class="v" id="qHR" style="color:#8A6100">0 agents</span></div>'+
+ '</div>'+
+ '<div class="trihead"><b>Approved plan packages</b><span>tick the ones to execute</span></div>'+
+ '<div class="selbar"><b id="selCount">0 of 4</b> selected to execute ·'+
+  '<span class="mini" data-act="sel-all">Select all</span><span class="mini" data-act="sel-none">Clear</span></div>'+
+ '<div id="pkgList">'+
+  '<div class="pkg" data-ot="0" data-xu="6.68" data-hire="0"><span class="cbx"></span>'+
+   '<div><div class="nm"><span class="pill">CAP00010</span>CP FTE Based</div>'+
+   '<div class="sub">OT 0.00 hrs · loan 6.68 FTE from CAP00013 · hire 0 · accepted (edited)</div></div>'+
+   '<span class="st">Queued</span></div>'+
+  '<div class="pkg" data-ot="80.24" data-xu="0" data-hire="0"><span class="cbx"></span>'+
+   '<div><div class="nm"><span class="pill">CAP00349</span>FTE for coverage</div>'+
+   '<div class="sub">OT 80.24 hrs · loan 0.00 FTE · hire 0 · accepted</div></div>'+
+   '<span class="st">Queued</span></div>'+
+  '<div class="pkg" data-ot="0" data-xu="0" data-hire="0"><span class="cbx"></span>'+
+   '<div><div class="nm"><span class="pill">CAP00018</span>Annuties -Vol Backlog</div>'+
+   '<div class="sub">Shrinkage plan corrected 25.72% → 31.98% · no spend</div></div>'+
+   '<span class="st">Queued</span></div>'+
+  '<div class="pkg" data-ot="0" data-xu="0" data-hire="0"><span class="cbx"></span>'+
+   '<div><div class="nm"><span class="pill">CAP00022</span>CP_ACE_ESC_CrossUtil</div>'+
+   '<div class="sub">Shrinkage plan corrected 42.33% → 45.61% · no spend</div></div>'+
+   '<span class="st">Queued</span></div>'+
+ '</div>'+
+ '<div class="card warn in"><div class="ch"><b>Also flagged</b><span class="tag">not blocking</span></div>'+
+  '<p>Upload rosters for <b>9 classes</b> — CP FTE Based, CP_Rite_SPNVoice_2024Q1, Annuties -Vol Backlog, CP_ACE_ESC_CrossUtil, volume based hybrid, FTE Cap Plan, Hybrid, ACE_TS_ENG_Voice_CU, FE Test — so projected FTE reflects the incoming hires. Total hidden: <b>93.11 FTE</b>.</p></div>'+
+ '<div class="execbar in" id="execBar"><span style="font-size:1.35rem">🚀</span>'+
+  '<div><div class="t" id="execTitle">Nothing selected</div>'+
+  '<div class="s">Only ticked packages post to CAP-ABILITY. Execution is simulated in this prototype.</div></div>'+
+  '<div class="btn p" data-act="exec">Execute selected →</div></div>'+
+ '<div class="done" id="execDone"><span>✓</span><span>Packages posted to CAP-ABILITY · both planners notified · undo open for 24 hours</span></div>'+
+'</div>'+
+
+/* ---------- LEDGER + MEMORY ---------- */
+'<div class="pane" data-view="time">'+
+ '<div class="ledger"><div class="lh"><div><div class="lt">Where the 24 hours went</div>'+
+  '<div class="ls">Baseline: one full planning cycle across 11 plans, done by hand</div></div><span class="lc">This cycle</span></div>'+
+  '<div id="ledRows"></div>'+
+  '<div class="ltot"><div><b id="ledTot">0h 00m</b><span>Absorbed by the agent</span></div>'+
+   '<div class="rem"><b id="ledRem">24h 00m</b><span>Left for you</span></div></div></div>'+
+ '<div class="memlist" id="memlist">'+
+  '<div class="mem"><div><div class="k">Fix roster gaps before recommending overtime or hiring.</div>'+
+   '<div class="s">You corrected me · 11 Jun · applied to 9 plans since</div></div><div class="w">rule<br><b>locked</b></div></div>'+
+  '<div class="mem"><div><div class="k">Never lend from FE Test — it is not real capacity.</div>'+
+   '<div class="s">You corrected me · 22 Jul · excluded from every allocation</div></div><div class="w">rule<br><b>locked</b></div></div>'+
+  '<div class="mem"><div><div class="k">Keep 1 FTE of headroom in any lending plan, and stay inside the region first.</div>'+
+   '<div class="s">From your conversation · 4 Aug · applied to 6 transfers</div></div><div class="w">confidence<br><b>high</b></div></div>'+
+ '</div>'+
+'</div>';
+
+/* ---------- ledger data ---------- */
+var LED=[
+ ['Reading 11 plans × 7 steps (83 screens)',750],
+ ['Cross-plan donor matching',200],
+ ['Roster reconciliation · 9 classes',135],
+ ['Shrinkage variance review',160],
+ ['Building the execution queue',65]
+];
+function fillLedger(){
+  var el=P('ledRows'); if(!el) return Promise.resolve();
+  var mx=Math.max.apply(null,LED.map(function(l){return l[1];}));
+  el.innerHTML=LED.map(function(l,i){
+    return '<div class="lrow" id="lr'+i+'"><span>'+l[0]+'</span>'+
+      '<span class="bar"><i data-w="'+(l[1]/mx*100)+'"></i></span>'+
+      '<span class="hr">'+hm(l[1])+'</span></div>';
+  }).join('');
+  var tot=0;
+  LED.forEach(function(l,i){
+    setTimeout(function(){
+      var r=P('lr'+i); if(r){ r.classList.add('in'); var b=r.querySelector('.bar i'); b.style.width=b.getAttribute('data-w')+'%'; }
+      tot+=l[1];
+      var t=P('ledTot'); if(t) t.textContent=hm(tot);
+      var rm=P('ledRem'); if(rm) rm.textContent=hm(1440-tot);
+    }, i*260);
+  });
+  return S(LED.length*260+500);
+}
+
+/* ---------- reveal helpers ---------- */
+function reveal(sel,gap){
+  var els=QA(sel);
+  els.forEach(function(e,k){ setTimeout(function(){ e.classList.add('in'); }, k*(gap||110)); });
+  return S(200+els.length*(gap||110));
+}
+function markTabs(shown){
+  QA('.tab').forEach(function(t){
+    var k=t.getAttribute('data-tab');
+    t.classList.toggle('shown', shown.indexOf(k)>-1);
+  });
+  return S(350);
+}
+function human(on){
+  ws.classList.toggle('human',!!on);
+  agent.classList.toggle('idle',!!on);
+  if(on){ curEl.classList.remove('on'); ast('You have control'); }
+  else ast('Standing by');
+  return S(300);
+}
+
+/* ============ SCENARIOS ============ */
+var SC=[
+{t:'The morning brief',s:'83 screens → 3 decisions',steps:[
+ {l:'Vera opens',f:function(){ ast('Standing by'); return S(400); }},
+ {l:'Unprompted',f:function(){ return say('Morning. I read all eleven plans at six. Eight of them need nothing from you today.'); }},
+ {l:'Reads the portfolio',f:function(){
+   return push('a','Agent · action','11 plans · 83 steps read · triaged by what changes a decision')
+     .then(function(){ return addTime(750,'reading 83 screens'); })
+     .then(function(){ return reveal('#decList .grp',120); })
+     .then(function(){ return reveal('#decList .row',150); })
+     .then(function(){ var c=P('c1'); if(c) c.textContent='3 plans'; return S(150); });
+ }},
+ {l:'Names them',f:function(){ return say('Three need a decision, across two programs. CP FTE Based is genuinely short today. Two more look fine this week and go badly negative by late September.'); }},
+ {l:'Shows autopilot set',f:function(){
+   return reveal('#autoList .row',130).then(function(){ var c=P('c2'); if(c) c.textContent='4 plans'; return S(150); });
+ }},
+ {l:'Folds the rest',f:function(){ return reveal('#fold1',0); }},
+ {l:'The point',f:function(){ return say('Four more only need a shrinkage correction under rules you gave me. The last four are folded, not hidden — open them whenever you like.'); }},
+ {l:'Complete',f:function(){ return say('That is eighty-three screens down to three questions. Where do you want to start?').then(function(){ curEl.classList.remove('on'); }); }}
+]},
+
+{t:'Filter by organisation',s:'Program, then straight into the plan',steps:[
+ {l:'Listening',f:function(){ return hear(1100); }},
+ {l:'You ask',f:function(){ return push('u','Planner · voice','Just show me ACE Retail.',true); }},
+ {l:'Filters',f:function(){
+   return reveal('#decList .grp',0).then(function(){ return reveal('#decList .row',0); })
+     .then(function(){ return reveal('#autoList .row',0); })
+     .then(function(){ return tap('[data-filter="ACE Retail"]','filtered · program = ACE Retail'); });
+ }},
+ {l:'Vera on the cut',f:function(){ return say('ACE Retail is eight plans, net over-under plus sixty-eight point six six. Two of them need you.'); }},
+ {l:'Back to all',f:function(){ return tap('[data-filter="all"]','filter cleared · 11 of 11'); }},
+ {l:'Opens the worst',f:function(){
+   var r=Q('.row[data-cap="CAP00010"]'); if(r) r.classList.add('focus');
+   return tap('.row[data-cap="CAP00010"]','opened CAP00010 · CP FTE Based').then(function(){ view('plan'); return S(250); });
+ }},
+ {l:'Marks the tabs',f:function(){ return markTabs(['ov','nh','shr','rec']); }},
+ {l:'Explains',f:function(){ return say('Seven tabs, all of them open. I have marked the four that change your answer — overview, new hire, shrinkage, recommend.'); }},
+ {l:'Draws the position',f:function(){ return ouChart('chOU','CAP00010',{mark:8,lbl:'w/c 09/27'}); }},
+ {l:'Complete',f:function(){ return say('Flat until late September, then minus twenty-two FTE and it stays there.').then(function(){ curEl.classList.remove('on'); }); }}
+]},
+
+{t:'Peek every tab',s:'Nothing is hidden from you',steps:[
+ {l:'Sets up',f:function(){ view('plan'); return markTabs(['ov','nh','shr','rec']).then(function(){ return ouChart('chOU','CAP00010',{mark:8,lbl:'w/c 09/27'}); }); }},
+ {l:'Listening',f:function(){ return hear(1100); }},
+ {l:'You ask',f:function(){ return push('u','Planner · voice','Show me the ones you skipped.',true); }},
+ {l:'Opens headcount',f:function(){ return tap('[data-tab="hc"]','opened Headcount · step 2'); }},
+ {l:'Reads it',f:function(){ return say('Headcount. Opening fifty, closing fifty. The only movement all week is two point three eight coming out of nesting.'); }},
+ {l:'Opens attrition',f:function(){ return tap('[data-tab="att"]','opened Attrition · step 5'); }},
+ {l:'Reads it',f:function(){ return say('Attrition. Zero actual, zero planned, right across the window. Nothing to adjust.'); }},
+ {l:'Back to the roster',f:function(){ return tap('[data-tab="nh"]','opened New Hire · step 3'); }},
+ {l:'The catch',f:function(){ return say('This one I did keep. A class ran on the nineteenth and two point four two trained heads never made it onto the roster, so the plan cannot see them.'); }},
+ {l:'Maps it',f:function(){
+   return tap('[data-act="go-roster"]','2.42 FTE mapped · projected FTE corrected').then(function(){
+     var d=P('doneRoster'); if(d) d.classList.add('on');
+     return addTime(135,'roster reconciliation, 9 classes');
+   });
+ }},
+ {l:'Complete',f:function(){ return say('Your real gap is six point six eight, not nine point one. Nine roster gaps across the portfolio are hiding ninety-three FTE.').then(function(){ curEl.classList.remove('on'); }); }}
+]},
+
+{t:'Adjust by voice',s:'One cell is wrong — say a number, it redraws',steps:[
+ {l:'Sets up',f:function(){
+   view('plan');
+   return markTabs(['ov','nh','shr','rec']).then(function(){ return ouChart('chOU','CAP00010',{mark:8,lbl:'w/c 09/27'}); })
+     .then(function(){ return tap('[data-tab="shr"]','opened Shrinkage · step 4'); })
+     .then(function(){ return shrChart('chShr','CAP00010'); })
+     .then(function(){ buildEditor(); return S(300); });
+ }},
+ {l:'Finds the anomaly',f:function(){
+   return push('a','Agent · check','09/20 planned at 6.0% · neighbouring weeks 49-51% · flagged as inconsistent')
+     .then(function(){ var r=P('er0'); if(r) r.classList.add('hl'); return S(400); });
+ }},
+ {l:'Names it',f:function(){ return say('Before you change anything — one cell here is wrong. The week of the twentieth is planned at six percent shrinkage. Every week around it is forty-nine.'); }},
+ {l:'Why it matters',f:function(){ return say('That single cell makes that week read minus six FTE when it should read about minus forty. Your last eight weeks actually ran forty-three point one one.'); }},
+ {l:'Listening',f:function(){ return hear(1200); }},
+ {l:'You ask',f:function(){ return push('u','Planner · voice','Set all five forward weeks to the eight-week actual.',true); }},
+ {l:'Applies it',f:function(){
+   return push('a','Agent · action','5 weeks set to 43.11% · requirement recalculated live')
+     .then(function(){ return voiceSet([[0,43.11],[1,43.11],[2,43.11],[3,43.11],[4,43.11]]); });
+ }},
+ {l:'Reads the impact',f:function(){ return say('Two things happened. The twentieth got much worse and much more honest. And the other four were over-planned, so requirement across all five actually falls by eleven point nine FTE.'); }},
+ {l:'Listening',f:function(){ return hear(1100); }},
+ {l:'You refine',f:function(){ return push('u','Planner · voice','Hold the last two at forty-five. I do not trust that drop in October.',true); }},
+ {l:'Refines it',f:function(){
+   return push('a','Agent · action','10/11 and 10/18 held at 45.0% · net change now -5.83 FTE')
+     .then(function(){ return voiceSet([[3,45],[4,45]]); });
+ }},
+ {l:'Submits',f:function(){
+   return tap('[data-act="go-shrink"]','submitted to plan · 5 weeks changed').then(function(){
+     var d=P('doneShr'); if(d) d.classList.add('on');
+     return addTime(160,'shrinkage variance review');
+   });
+ }},
+ {l:'Complete',f:function(){ return say('Submitted. Same formula the platform uses — requirement is billable over one minus shrinkage. You can see every number change as I say it.').then(function(){ curEl.classList.remove('on'); }); }}
+]},
+
+{t:'Take the mouse',s:'It steps aside, you drive',steps:[
+ {l:'Sets up',f:function(){
+   view('plan');
+   return markTabs(['ov','nh','shr','rec']).then(function(){ return ouChart('chOU','CAP00010',{mark:8,lbl:'w/c 09/27'}); })
+     .then(function(){ return tap('[data-tab="shr"]','opened Shrinkage'); })
+     .then(function(){ return shrChart('chShr','CAP00010'); })
+     .then(function(){ buildEditor(); return S(250); });
+ }},
+ {l:'Listening',f:function(){ return hear(1100); }},
+ {l:'You ask',f:function(){ return push('u','Planner · voice','Let me do this bit myself.',true); }},
+ {l:'Hands over',f:function(){
+   return say('All yours. Drag the sliders or type the numbers — I will keep the requirement and the chart in step.')
+     .then(function(){ return human(true); })
+     .then(function(){ return push('s','Control','handed to planner · agent watching, not acting'); });
+ }},
+ {l:'You are driving',f:function(){
+   return push('s','Try it','sliders below are live — drag one and the Overview chart redraws')
+     .then(function(){ return S(600); });
+ }},
+ {l:'Nudges',f:function(){ return say('Every tab and every control on the left is yours now. I am still reading, I am just not touching anything.'); }},
+ {l:'Takes it back',f:function(){
+   return human(false).then(function(){ return push('s','Control','returned to agent'); });
+ }},
+ {l:'Complete',f:function(){ return say('Say the word any time and I will step aside again.').then(function(){ curEl.classList.remove('on'); }); }}
+]},
+
+{t:'Approve every item',s:'Nothing posts until you tick it',steps:[
+ {l:'Opens the queue',f:function(){
+   return tap('[data-view="queue"]','opened action queue').then(function(){ view('queue'); return reveal('.pkg',140); });
+ }},
+ {l:'Explains',f:function(){ return say('Four packages are queued. Two cost nothing — they are shrinkage corrections. Two spend something.'); }},
+ {l:'Ticks the free ones',f:function(){
+   return tap('#pkgList .pkg:nth-child(3)','ticked CAP00018 · no spend')
+     .then(function(){ return tap('#pkgList .pkg:nth-child(4)','ticked CAP00022 · no spend'); });
+ }},
+ {l:'The spend items',f:function(){ return say('These two need you specifically. Six point six eight FTE loaned between programs, and eighty hours of overtime on FTE for coverage.'); }},
+ {l:'Listening',f:function(){ return hear(1200); }},
+ {l:'You approve all',f:function(){ return push('u','Planner · voice','Approve all four. Execute.',true); }},
+ {l:'Selects all',f:function(){ return tap('[data-act="sel-all"]','all 4 packages selected'); }},
+ {l:'Executes',f:function(){
+   return tap('[data-act="exec"]','executed · 4 packages posted to CAP-ABILITY')
+     .then(function(){ return addTime(65,'building the execution queue'); });
+ }},
+ {l:'Complete',f:function(){ return say('Posted. Eighty hours of overtime, one cross-program loan, no requisitions. Both planners notified and you can undo any of it for twenty-four hours.').then(function(){ curEl.classList.remove('on'); }); }}
+]},
+
+{t:'The hours back',s:'24 down to 2, itemised',steps:[
+ {l:'Opens the ledger',f:function(){ view('time'); return S(300); }},
+ {l:'Vera opens',f:function(){ return say('You asked what this actually saves. Here it is, line by line, for this cycle.'); }},
+ {l:'Fills it in',f:function(){ return fillLedger(); }},
+ {l:'Reads the total',f:function(){ return say('Twenty-one hours and fifty minutes absorbed. Two hours and ten minutes left, and all of it is decisions.'); }},
+ {l:'Where it came from',f:function(){ return say('The biggest single line is reading. Twelve and a half hours of opening plans and scanning weeks, and none of it was judgement.'); }},
+ {l:'Cites the rules',f:function(){
+   QA('#memlist .mem').forEach(function(m,i){ setTimeout(function(){ m.classList.add('cite'); }, i*280); });
+   return push('a','Agent · recall','3 standing rules applied today · all from your corrections').then(function(){ return S(900); });
+ }},
+ {l:'The honest bit',f:function(){ return say('Nobody told me to check rosters before recommending overtime. You did, in June, once. That one rule is most of what made today different.'); }},
+ {l:'Complete',f:function(){ return say('The reading moved to me. The approvals never left you — and if a rule stops being true, delete it.').then(function(){ curEl.classList.remove('on'); }); }}
+]}
+];
+
+/* ============ ENGINE ============ */
+var si=0,idx=0,playing=false,busy=false;
+var tks=P('tks'),sLb=P('sLb'),sCt=P('sCt'),pIc=P('pIc');
+var IP='<path d="M6 4l14 8-14 8z"/>',IU='<path d="M7 4h4v16H7zM13 4h4v16h-4z"/>';
+function reset(){
+  gen++; playing=false; busy=false; snap=false; idx=0; savedMin=0;
+  P('wsIn').innerHTML=WS;
+  tl.innerHTML=''; bub.textContent='';
+  agent.classList.remove('talk','hear','idle'); ast('Standing by');
+  ws.classList.remove('human');
+  curEl.classList.remove('on'); curEl.style.transform='translate(50px,50px)';
+  bindWS(); tally();
+  render();
+}
+function bindWS(){
+  QA('#wsIn [data-act],#wsIn [data-tab],#wsIn [data-view],#wsIn [data-filter],#wsIn .pkg,#wsIn .cbx,#wsIn .row').forEach(function(el){
+    el.addEventListener('click',function(e){
+      if(!ws.classList.contains('human')) return;
+      e.stopPropagation();
+      if(el.classList.contains('row')){
+        var c=el.getAttribute('data-cap');
+        if(c==='CAP00010'){ view('plan'); }
+        return;
+      }
+      fire(el);
+    });
+  });
+}
+function render(){
+  var s=SC[si];
+  tks.innerHTML=s.steps.map(function(_,i){ return '<i class="'+(i<idx?'done':'')+(i===idx?' now':'')+'"></i>'; }).join('');
+  sCt.textContent=idx+' / '+s.steps.length;
+  sLb.textContent= idx>=s.steps.length?'Complete':(idx===0?'Ready':s.steps[idx-1].l);
+  pIc.innerHTML= playing?IU:IP;
+  P('bS').disabled= idx>=s.steps.length;
+}
+function once(){
+  var s=SC[si];
+  if(idx>=s.steps.length||busy) return Promise.resolve(false);
+  var mine=gen; busy=true; sLb.textContent=s.steps[idx].l;
+  var run;
+  try{ run=Promise.resolve(s.steps[idx].f()); }
+  catch(e){ run=push('d','error',String(e&&e.message?e.message:e)); }
+  return run['catch'](function(e){ return push('d','error',String(e&&e.message?e.message:e)); })
+    .then(function(){ if(stale(mine)) return false; idx++; busy=false; render(); return true; });
+}
+function loop(){
+  if(!playing){ render(); return; }
+  once().then(function(ok){
+    if(!ok){ playing=false; render(); return; }
+    if(!playing){ render(); return; }
+    S(185).then(loop);
+  });
+}
+function toggle(){
+  if(playing){ playing=false; snap=true; render(); return; }
+  snap=false;
+  if(idx>=SC[si].steps.length) reset();
+  playing=true; render(); loop();
+}
+function pick(i){ si=i; reset(); QA('.scn').forEach(function(b,j){ b.classList.toggle('on',j===i); }); }
+
+P('scnbar').innerHTML=SC.map(function(s,i){
+  return '<button class="scn'+(i===0?' on':'')+'" data-i="'+i+'"><kbd>'+(i+1)+'</kbd>'+s.t+'</button>';
+}).join('');
+QA('.scn').forEach(function(b){ b.addEventListener('click',function(){ pick(parseInt(b.getAttribute('data-i'),10)); }); });
+P('bP').addEventListener('click',toggle);
+P('bS').addEventListener('click',function(){ playing=false; snap=false; render(); once(); });
+P('bR').addEventListener('click',reset);
+QA('.sp').forEach(function(b){ b.addEventListener('click',function(){
+  speed=parseFloat(b.getAttribute('data-sp'));
+  QA('.sp').forEach(function(x){ x.classList.toggle('on',x===b); }); }); });
+document.addEventListener('keydown',function(e){
+  if(e.target&&/INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  if(e.code==='Space'){ e.preventDefault(); toggle(); }
+  else if(e.key==='ArrowRight'){ e.preventDefault(); playing=false; snap=false; render(); once(); }
+  else if(e.key==='r'||e.key==='R'){ reset(); }
+  else if(['1','2','3','4','5','6','7'].indexOf(e.key)>-1){ pick(parseInt(e.key,10)-1); }
+});
+reset();
+})();
+</script>
+</body>
+</html>
