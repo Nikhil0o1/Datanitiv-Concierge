@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { emit, emitError } from '../lib/telemetry';
 import { loadAllDataRows } from '../utils/planTransform';
 import { buildScenarioSteps, SCENARIOS } from '../data/scenarios';
 import { f2, hm } from '../utils/format';
 import { useScenarioEngine } from '../hooks/useScenarioEngine';
+import { useConcierge } from '../hooks/useConcierge';
 import { useVoice } from '../hooks/useVoice';
 import { useAgentWebSocket } from '../hooks/useAgentWebSocket';
 import AgentCursor from './AgentCursor';
 import AgentAvatar from './AgentAvatar';
+import PlanSearchBar from './PlanSearchBar';
+import { filterPlans, matchesPlanSearch } from '../utils/planSearch';
+import ConciergeNudgePanel from './ConciergeNudgePanel';
 import PlanTabs, { TAB_LABELS, tabsForPlan } from './plan/PlanTabs';
 import PortfolioLanding from './PortfolioLanding';
 import { computeXutil, defaultOtWeekly, fwdCount } from '../utils/planLogic';
@@ -94,6 +99,15 @@ export default function PlanningApp({ logoSrc }) {
 
   const engine = useScenarioEngine(state, setState, { workspaceRef, domHandlersRef });
 
+  const concierge = useConcierge({
+    actionsRef: engine.actionsRef,
+    stateRef,
+    setState,
+    isHumanActive: engine.isHumanActive,
+    pushRef: engine.pushRef,
+    enabled: !loading,
+  });
+
   const ws = useAgentWebSocket({
     actionsRef: engine.actionsRef,
     onStep: (ev) => {
@@ -120,12 +134,24 @@ export default function PlanningApp({ logoSrc }) {
     isHumanActive: engine.isHumanActive,
   });
 
-  const matchesSearch = useCallback((item) => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    return [item.plan_name, item.cap_id, item.program, item.lob, item.site, item.why]
-      .some((field) => (field || '').toLowerCase().includes(q));
-  }, [searchQuery]);
+  const matchesSearch = useCallback((item) => matchesPlanSearch(item, searchQuery), [searchQuery]);
+
+  const filteredData = useMemo(
+    () => filterPlans(data, { query: searchQuery, program: state.filter }),
+    [data, searchQuery, state.filter],
+  );
+
+  const filteredPackages = useMemo(() => {
+    const base =
+      state.filter === 'all'
+        ? state.packages
+        : state.packages.filter((p) => {
+            const row = data.find((d) => d.capId === p.cap_id);
+            return row?.program === state.filter;
+          });
+    if (!searchQuery.trim()) return base;
+    return base.filter((p) => matchesPlanSearch(p, searchQuery));
+  }, [state.packages, state.filter, data, searchQuery]);
 
   const refreshPortfolio = useCallback(async () => {
     try {
@@ -152,6 +178,19 @@ export default function PlanningApp({ logoSrc }) {
       console.error(e);
     }
   }, [setState]);
+
+  useEffect(() => {
+    if (loading) return;
+    emit('ui.context', {
+      metadata: {
+        cap_id: state.activePlan,
+        active_cap_id: state.activePlan,
+        active_tab: state.activeTab,
+        view: state.view,
+        filter: state.filter,
+      },
+    });
+  }, [loading, state.activePlan, state.activeTab, state.view, state.filter]);
 
   useEffect(() => {
     (async () => {
@@ -217,14 +256,7 @@ export default function PlanningApp({ logoSrc }) {
     () => (triage.quiet?.filter((p) => (state.filter === 'all' || p.program === state.filter) && matchesSearch(p)) || []),
     [triage.quiet, state.filter, matchesSearch],
   );
-  const showing = useMemo(() => {
-    const base = state.filter === 'all' ? data : data.filter((p) => p.program === state.filter);
-    if (!searchQuery.trim()) return base.length;
-    const q = searchQuery.trim().toLowerCase();
-    return base.filter((p) =>
-      [p.plan, p.capId, p.program, p.lob, p.site, p.planner].some((f) => (f || '').toLowerCase().includes(q)),
-    ).length;
-  }, [data, state.filter, searchQuery]);
+  const showing = filteredData.length;
 
   const setEditorWeek = (k, v) => {
     setState((s) => {
@@ -286,8 +318,12 @@ export default function PlanningApp({ logoSrc }) {
         stateRef.current.activePlan,
         stateRef.current.editorWeeks.map((w) => ({ week_idx: w.weekIdx, shrink_plan: w.cur })),
       );
+      emit('plan.shrinkage.submitted', {
+        metadata: { cap_id: stateRef.current.activePlan, week_count: stateRef.current.editorWeeks.length, success: true },
+      });
       await refreshPortfolio();
     } catch (e) {
+      emitError('plan.shrinkage.failed', e, { cap_id: stateRef.current.activePlan });
       console.error(e);
     }
   }, [setState, refreshPortfolio]);
@@ -334,10 +370,12 @@ export default function PlanningApp({ logoSrc }) {
     };
     setState((s) => ({ ...s, doneRoster: true }));
     try {
-      const res = await api.mapRoster(id, payload);
+      await api.mapRoster(stateRef.current.activePlan, {});
+      emit('plan.roster.mapped', { metadata: { cap_id: stateRef.current.activePlan, success: true } });
       await refreshPortfolio();
       return res;
     } catch (e) {
+      emitError('plan.roster.failed', e, { cap_id: stateRef.current.activePlan });
       console.error(e);
       setState((s) => ({ ...s, doneRoster: false }));
       throw e;
@@ -437,7 +475,9 @@ export default function PlanningApp({ logoSrc }) {
       try {
         const res = await api.executeQueue(ids);
         message = res?.message || `Posted ${ids.length} package(s) to CAP-ABILITY`;
+        emit('queue.executed', { metadata: { package_ids: ids, count: ids.length, success: true } });
       } catch (e) {
+        emitError('queue.execute.failed', e, { package_ids: ids });
         console.error(e);
         message = e.message || 'Execute failed';
       }
@@ -489,8 +529,12 @@ export default function PlanningApp({ logoSrc }) {
   }, [setState, refreshPortfolio]);
 
   domHandlersRef.current = {
-    setFilter: (prog) => setState((s) => ({ ...s, filter: prog, view: 'port', focusCap: null })),
+    setFilter: (prog) => {
+      emit('filter.changed', { metadata: { program: prog } });
+      setState((s) => ({ ...s, filter: prog, view: 'port', focusCap: null }));
+    },
     openPlan: (capId) => {
+      emit('plan.opened', { metadata: { cap_id: capId, source: 'user' } });
       const p = data.find((r) => r.capId === capId);
       const tabs = tabsForPlan(p);
       const rosterOk =
@@ -518,6 +562,7 @@ export default function PlanningApp({ logoSrc }) {
       }
     },
     openTab: (tab) => {
+      emit('tab.changed', { metadata: { cap_id: stateRef.current.activePlan, active_tab: tab } });
       setState((s) => ({
         ...s,
         view: 'plan',
@@ -527,6 +572,7 @@ export default function PlanningApp({ logoSrc }) {
       }));
     },
     view: (v) => {
+      emit('view.changed', { metadata: { from_view: stateRef.current.view, to_view: v, cap_id: stateRef.current.activePlan } });
       setState((s) => ({
         ...s,
         view: v,
@@ -640,6 +686,13 @@ export default function PlanningApp({ logoSrc }) {
               onKeyDownCapture={() => engine.markHumanActive()}
             >
               <AgentCursor cursor={engine.cursor} />
+              <ConciergeNudgePanel
+                nudges={concierge.nudges}
+                loading={concierge.loading}
+                onShowMe={concierge.acceptAndGuide}
+                onDismiss={concierge.dismissNudge}
+                onSnooze={concierge.snoozeNudge}
+              />
               <div id="wsIn">
                 <div className="wtop">
                   <span className="crumb"><b id="crumbTxt">{crumb[0]}</b></span>
@@ -691,27 +744,37 @@ export default function PlanningApp({ logoSrc }) {
                       {g.name}
                     </span>
                   ))}
-                  <input
-                    type="search"
-                    className="srch"
-                    placeholder="Search plan / planner / site"
+                  <PlanSearchBar
+                    plans={data}
+                    program={state.filter}
                     value={searchQuery}
-                    onChange={(e) => {
+                    showing={showing}
+                    total={data.length}
+                    onChange={(v) => {
                       engine.markHumanActive();
-                      setSearchQuery(e.target.value);
+                      setSearchQuery(v);
                     }}
-                    aria-label="Search plans"
+                    onOpenPlan={(capId) => {
+                      engine.markHumanActive();
+                      setSearchQuery('');
+                      domHandlersRef.current.openPlan?.(capId);
+                    }}
+                    onSearchSubmit={() => {
+                      if (state.view !== 'port') {
+                        setState((s) => ({ ...s, view: 'port' }));
+                      }
+                    }}
                   />
-                  <span className="showing" id="showing">Showing {showing} of {data.length}</span>
                 </div>
 
                 {state.view === 'port' && (
                   <div className="pane on" data-view="port" ref={paneRef}>
                     <PortfolioLanding
-                      plans={data}
+                      plans={filteredData}
                       programs={programs}
                       filter={state.filter}
                       search={searchQuery}
+                      expandAll={Boolean(searchQuery.trim())}
                       triageCounts={{
                         dec: filteredDec.length,
                         auto: filteredAuto.length,
@@ -795,12 +858,12 @@ export default function PlanningApp({ logoSrc }) {
                     </div>
                     <div className="trihead"><b>Approved plan packages</b><span>tick the ones to execute</span></div>
                     <div className="selbar">
-                      <b id="selCount">{ticked.length} of {state.packages.length}</b> selected to execute ·
+                      <b id="selCount">{filteredPackages.filter((p) => p.ticked).length} of {filteredPackages.length}</b> selected to execute ·
                       <span className="mini" data-act="sel-all" onClick={() => handleSelectAllPackages()}>Select all</span>
                       <span className="mini" data-act="sel-none" onClick={() => handleClearPackages()}>Clear</span>
                     </div>
                     <div id="pkgList">
-                      {state.packages.map((p) => (
+                      {filteredPackages.map((p) => (
                         <div
                           key={p.id}
                           className={`pkg ${state.revealed.pkg ? 'in' : ''} ${p.ticked ? 'tick' : ''} ${p.done ? 'done' : ''}`}

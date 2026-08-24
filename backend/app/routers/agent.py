@@ -29,6 +29,7 @@ async def agent_chat(body: AgentChatRequest, session: AsyncSession = Depends(get
             active_cap_id=body.context_cap_id,
             active_view=ui.get("view"),
             active_filter=ui.get("filter"),
+            active_tab=ui.get("active_tab"),
         )
 
         history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
@@ -46,6 +47,12 @@ async def agent_chat(body: AgentChatRequest, session: AsyncSession = Depends(get
             body.message[:80],
             len(history),
         )
+        from app.concierge.services.business_events import emit_business_event
+
+        await emit_business_event(
+            event_type="agent.chat.started",
+            metadata={"source": body.source, "cap_id": body.context_cap_id},
+        )
         client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         try:
             response = await client.messages.create(
@@ -61,11 +68,23 @@ async def agent_chat(body: AgentChatRequest, session: AsyncSession = Depends(get
 
         raw = response.content[0].text if response.content else ""
         parsed = _parse_agent_json(raw)
+        await emit_business_event(
+            event_type="agent.chat.completed",
+            metadata={"intent": parsed.get("intent"), "action_count": len(parsed.get("actions") or [])},
+        )
         return _to_response(parsed)
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("agent_chat failed")
+        from app.concierge.services.business_events import emit_business_event
+
+        await emit_business_event(
+            event_type="agent.chat.failed",
+            severity="error",
+            error_code="AGENT_CHAT_ERROR",
+            metadata={"error": str(exc)[:200]},
+        )
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

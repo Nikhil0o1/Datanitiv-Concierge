@@ -73,7 +73,19 @@ p{margin:0}
 .srch::placeholder{color:var(--dim)}
 .ws:not(.human) .sel,.ws:not(.human) .row,.ws:not(.human) .tab,.ws:not(.human) .mini,.ws:not(.human) .btn,.ws:not(.human) .pkg,.ws:not(.human) .navviews span{pointer-events:none}
 .ws:not(.human) .srch{pointer-events:auto}
-.showing{font-family:var(--fm);font-size:.6rem;color:var(--dim);margin-left:auto}
+.showing{font-family:var(--fm);font-size:.6rem;color:var(--dim);white-space:nowrap;flex:none}
+.plan-search{position:relative;flex:1;min-width:180px;display:flex;align-items:center;gap:8px}
+.plan-search-field{position:relative;flex:1;display:flex;align-items:center}
+.plan-search-icon{position:absolute;left:10px;font-size:.85rem;color:var(--dim);pointer-events:none;line-height:1}
+.plan-search .srch{width:100%;padding-left:28px;padding-right:28px}
+.plan-search-clear{position:absolute;right:6px;width:22px;height:22px;border:none;border-radius:50%;background:var(--surf2);color:var(--muted);cursor:pointer;font-size:1rem;line-height:1;display:grid;place-items:center}
+.plan-search-clear:hover{background:var(--line);color:var(--ink)}
+.plan-search-results{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:50;margin:0;padding:4px;list-style:none;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shm);max-height:240px;overflow-y:auto}
+.plan-search-hit{width:100%;display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 10px;border:none;border-radius:8px;background:transparent;text-align:left;cursor:pointer;font:inherit;color:inherit}
+.plan-search-hit:hover,.plan-search-hit.active{background:var(--blue-s)}
+.plan-search-hit-name{font-size:.78rem;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plan-search-hit-meta{font-family:var(--fm);font-size:.58rem;color:var(--dim);white-space:nowrap}
+.plan-search-empty{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:50;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--sh);font-size:.74rem;color:var(--muted)}
 
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
@@ -330,7 +342,7 @@ table.fl tr.grp-row td{font-weight:700;background:var(--wash)}
 .agent{border-left:none;background:var(--bg);display:flex;flex-direction:column;min-width:0;height:100%;max-height:none;overflow:hidden}
 @media(max-width:1060px){.agent{border-left:none;border-top:1px solid var(--line);order:-1;max-height:42vh}}
 .ahead{padding:18px 16px 14px;text-align:center;border-bottom:1px solid var(--line);background:#fff}
-.orb{position:relative;width:98px;height:98px;margin:0 auto}
+.orb{position:relative;width:108px;height:108px;margin:0 auto}
 .ring{position:absolute;inset:-7px;border-radius:50%;border:2px solid var(--amber);opacity:0}
 .ring.r2{inset:-14px;border-width:1px}
 .agent.talk .ring{animation:rg 1.5s ease-out infinite}
@@ -405,33 +417,44 @@ footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--dim);fon
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}}
 
 .vera-portrait{
-  position:relative;width:98px;height:98px;border-radius:50%;overflow:hidden;margin:0 auto;
-  border:3px solid #fff;box-shadow:0 8px 24px rgba(28,27,24,.14),0 0 0 1px rgba(245,176,26,.3);
-  background:linear-gradient(165deg,#FFF9F0,#F7E6BF);
+  position:relative;width:108px;height:108px;border-radius:50%;overflow:hidden;margin:0 auto;
+  border:3px solid #fff;box-shadow:0 10px 28px rgba(28,27,24,.12),0 0 0 1px rgba(245,176,26,.28);
+  background:linear-gradient(165deg,#FFFCF6,#F3E4C4);
 }
 .vera-svg{width:100%;height:100%;display:block}
-.vera-mouth-open,.vera-tongue{opacity:0;transform-origin:center center}
-.vera-mouth-closed{opacity:1;transform-origin:center center}
-.vera-portrait.talking .vera-mouth-closed{animation:veraLipClose .24s ease-in-out infinite alternate}
-.vera-portrait.talking .vera-mouth-open{animation:veraLipOpen .24s ease-in-out infinite alternate;opacity:1}
-@keyframes veraLipOpen{0%{opacity:0;transform:scaleY(.15)}100%{opacity:1;transform:scaleY(1)}}
-@keyframes veraLipClose{0%{opacity:1;transform:scaleY(1)}100%{opacity:.1;transform:scaleY(.3)}}
-.vera-lid{opacity:0;transform-origin:center center}
-.vera-portrait:not(.talking) .vera-lid{animation:veraBlink 4.2s ease-in-out infinite}
-@keyframes veraBlink{0%,44%,48%,100%{opacity:0;transform:scaleY(0)}46%{opacity:1;transform:scaleY(1)}}
-.vera-shine{position:absolute;inset:0;background:linear-gradient(145deg,rgba(255,255,255,.22) 0%,transparent 45%);pointer-events:none;border-radius:50%}
-.vera-speech-indicator{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);display:flex;align-items:flex-end;gap:3px;height:14px;padding:0 6px;border-radius:999px;background:rgba(28,27,24,.38);backdrop-filter:blur(4px);z-index:2}
-.vera-speech-indicator span{display:block;width:3px;border-radius:2px;background:#F5B01A;animation:veraBar .72s ease-in-out infinite}
-.vera-speech-indicator span:nth-child(1){height:5px;animation-delay:0ms}
-.vera-speech-indicator span:nth-child(2){height:9px;animation-delay:90ms}
-.vera-speech-indicator span:nth-child(3){height:12px;animation-delay:180ms}
-.vera-speech-indicator span:nth-child(4){height:8px;animation-delay:270ms}
-.vera-speech-indicator span:nth-child(5){height:6px;animation-delay:360ms}
-@keyframes veraBar{0%,100%{transform:scaleY(.45);opacity:.65}50%{transform:scaleY(1);opacity:1}}
-.vera-portrait.talking .vera-svg{animation:veraSpeakGlow 1.2s ease-in-out infinite alternate}
-@keyframes veraSpeakGlow{0%{filter:brightness(1)}100%{filter:brightness(1.04)}}
-.vera-portrait.listening::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(59,111,181,.45);animation:veraListen 1.6s ease-out infinite;pointer-events:none}
-@keyframes veraListen{0%{transform:scale(.96);opacity:.9}100%{transform:scale(1.08);opacity:0}}
+.vera-shine{position:absolute;inset:0;background:linear-gradient(145deg,rgba(255,255,255,.28) 0%,transparent 42%);pointer-events:none;border-radius:50%}
+/* Idle mouth — closed smile */
+.vera-mouth-inner,.vera-teeth{opacity:0;transform:scaleY(0);transform-origin:50% 0}
+.vera-lid{opacity:0;transform-origin:center center;transform:scaleY(0)}
+.vera-portrait:not(.talking) .vera-lid{animation:veraBlink 5s ease-in-out infinite}
+@keyframes veraBlink{0%,42%,46%,100%{opacity:0;transform:scaleY(0)}44%{opacity:1;transform:scaleY(1)}}
+/* Talking — gentle lip motion; audio cue is the wave bars below the avatar */
+.vera-portrait.talking .vera-face{
+  animation:veraHeadBob 2.8s ease-in-out infinite;
+  transform-box:fill-box;transform-origin:50% 25%;
+}
+@keyframes veraHeadBob{0%,100%{transform:translateY(0)}40%{transform:translateY(.8px)}75%{transform:translateY(-.5px)}}
+.vera-portrait.talking .vera-lips{animation:veraLips 2.4s ease-in-out infinite;transform-origin:50% 50%}
+@keyframes veraLips{
+  0%,100%{transform:scaleY(1) scaleX(1)}
+  20%{transform:scaleY(1.06) scaleX(1.02)}
+  45%{transform:scaleY(.96) scaleX(1.04)}
+  70%{transform:scaleY(1.04) scaleX(1.01)}
+}
+.vera-portrait.talking .vera-mouth-inner{opacity:1;animation:veraMouthOpen 2.4s ease-in-out infinite;transform-origin:50% 0}
+.vera-portrait.talking .vera-teeth{opacity:.85;animation:veraMouthOpen 2.4s ease-in-out infinite;transform-origin:50% 0}
+@keyframes veraMouthOpen{
+  0%,100%{transform:scaleY(0)}
+  15%{transform:scaleY(.5)}
+  32%{transform:scaleY(.12)}
+  48%{transform:scaleY(.62)}
+  62%{transform:scaleY(.18)}
+  78%{transform:scaleY(.45)}
+  90%{transform:scaleY(.08)}
+}
+.vera-portrait.talking .vera-lid{animation:none;opacity:0;transform:scaleY(0)}
+.vera-portrait.listening::after{content:"";position:absolute;inset:-5px;border-radius:50%;border:2px solid rgba(59,111,181,.4);animation:veraListen 2s ease-out infinite;pointer-events:none}
+@keyframes veraListen{0%{transform:scale(.97);opacity:.85}100%{transform:scale(1.06);opacity:0}}
 .chat-in{display:flex;gap:6px;margin:10px 16px 0;width:calc(100% - 32px);max-width:none}
 .chat-in input{flex:1;min-width:0;border:1px solid var(--line2);border-radius:8px;padding:8px 10px;font-size:.78rem;background:#fff;color:var(--ink)}
 .chat-in input:focus{outline:none;border-color:var(--amber);box-shadow:0 0 0 2px var(--amber-s)}
@@ -445,3 +468,36 @@ footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--dim);fon
 .navviews span{font-family:var(--fm);font-size:.56rem;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line2);border-radius:7px;padding:4px 9px;background:#fff;color:var(--muted);cursor:default}
 .ws.human .navviews span{cursor:pointer}
 .navviews span.on{border-color:var(--ink);color:var(--ink);background:var(--amber-s);font-weight:600}
+
+/* Concierge — compact nudges; cursor runs only after Accept & show me */
+.concierge-nudges{position:absolute;top:10px;right:10px;z-index:45;width:min(280px,calc(100% - 20px));max-height:min(340px,calc(100vh - 100px));display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.concierge-nudges-stack{display:flex;flex-direction:column;gap:6px;overflow-y:auto;overscroll-behavior:contain;max-height:min(300px,calc(100vh - 140px));padding-right:2px}
+.concierge-nudges-head{display:flex;align-items:center;gap:6px;padding:5px 9px;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:8px;box-shadow:var(--sh);pointer-events:auto;flex:none}
+.concierge-dot{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:blip 1.6s infinite;flex:none}
+.concierge-label{font-family:var(--fm);font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink);font-weight:700}
+.concierge-sub{font-family:var(--fm);font-size:.5rem;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+.concierge-count{margin-left:auto;font-family:var(--fm);font-size:.52rem;font-weight:700;color:var(--blue);background:#EEF4FB;border-radius:999px;padding:2px 7px}
+.concierge-nudge-card{background:rgba(255,255,255,.97);border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:10px;padding:9px 10px;box-shadow:var(--sh);pointer-events:auto;animation:fade .32s both;flex:none}
+.concierge-nudge-loading{font-family:var(--fm);font-size:.58rem;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.concierge-nudge-top{display:flex;gap:8px;align-items:flex-start;justify-content:space-between;margin-bottom:6px}
+.concierge-nudge-title-wrap{min-width:0;flex:1}
+.concierge-nudge-title{font-family:var(--fd);font-size:.82rem;font-weight:700;line-height:1.25;color:var(--ink)}
+.concierge-nudge-program,.concierge-nudge-cap{font-family:var(--fm);font-size:.52rem;letter-spacing:.05em;color:var(--dim);margin-top:2px}
+.concierge-reliability{text-align:right;min-width:52px;flex:none}
+.concierge-reliability .pct{display:block;font-family:var(--fd);font-size:.88rem;font-weight:800;line-height:1}
+.concierge-reliability .lbl{font-family:var(--fm);font-size:.46rem;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.concierge-reliability.high .pct{color:var(--pos)}
+.concierge-reliability.mid .pct{color:var(--warn)}
+.concierge-reliability.low .pct{color:var(--neg)}
+.concierge-nudge-recommend{font-size:.74rem;font-weight:600;color:var(--ink);margin:0 0 6px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.concierge-nudge-reason{font-size:.68rem;color:var(--muted);margin-bottom:6px}
+.concierge-nudge-reason summary{cursor:pointer;font-family:var(--fm);font-size:.54rem;letter-spacing:.05em;text-transform:uppercase;color:var(--blue)}
+.concierge-nudge-explanation{margin-top:4px;font-size:.7rem;color:var(--text);white-space:pre-wrap;line-height:1.4;max-height:88px;overflow-y:auto}
+.concierge-nudge-factors{font-family:var(--fm);font-size:.5rem;letter-spacing:.04em;color:var(--dim);margin-bottom:8px}
+.concierge-nudge-actions{display:flex;flex-wrap:wrap;gap:5px}
+.concierge-btn{border:1px solid var(--line2);border-radius:7px;background:#fff;color:var(--ink);font-size:.66rem;font-weight:600;padding:5px 8px;cursor:pointer;transition:.15s}
+.concierge-btn:hover{border-color:var(--blue);color:var(--blue)}
+.concierge-btn.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.concierge-btn.primary:hover{filter:brightness(1.05)}
+.concierge-btn.ghost{background:transparent;color:var(--dim)}
+.concierge-nudge-more{font-family:var(--fm);font-size:.52rem;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);text-align:center;padding:4px 0;pointer-events:none}

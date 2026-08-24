@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { readRosterFile } from '../utils/rosterCsv';
+import { emit, emitError } from '../lib/telemetry';
 import { applyAgentActions } from './scenarioActions';
 
 /** Map timeline messages to Claude conversation history (natural replies only). */
@@ -139,13 +140,10 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanA
       let reply = '';
       let actionList = [];
 
-      const chatMessage =
-        rosterMeta
-          ? [
-              trimmed || 'Please confirm this roster upload.',
-              `[Roster CSV already mapped on ${rosterMeta.cap_id}: file=${rosterMeta.filename}, employees=${rosterMeta.employee_count}, fte=${f2(rosterMeta.total_fte)}, classes=${(rosterMeta.class_refs || []).join('|') || 'n/a'}. Acknowledge in reply; do not emit map_roster again.]`,
-            ].join('\n')
-          : trimmed;
+      const chatStart = performance.now();
+      emit('agent.chat.started', {
+        metadata: { source, cap_id: st.activePlan, view: st.view, filter: st.filter },
+      });
 
       try {
         const chat = await api.agentChat(chatMessage, st.activePlan, {
@@ -161,7 +159,16 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanA
         if (rosterMeta) {
           actionList = (actionList || []).filter((a) => a?.type !== 'map_roster');
         }
+        emit('agent.chat.completed', {
+          latency_ms: Math.round(performance.now() - chatStart),
+          metadata: {
+            source,
+            action_count: actionList.length,
+            action_types: actionList.map((a) => a.type),
+          },
+        });
       } catch (e) {
+        emitError('agent.chat.failed', e, { source });
         const errMsg = e?.message || String(e);
         if (push) await push('d', 'Connection', errMsg.slice(0, 220));
         reply = rosterMeta

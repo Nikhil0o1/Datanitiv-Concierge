@@ -28,6 +28,22 @@ from app.models import (  # noqa: F401 — register models with metadata
     OneviewTitleTranslation,
     SchemaMigration,
 )
+from app.concierge.models import (  # noqa: F401
+    ConciergeBaseline,
+    ConciergeCase,
+    ConciergeDetectionResult,
+    ConciergeDetectionRule,
+    ConciergeEvent,
+    ConciergeEventQueue,
+    ConciergeIncident,
+    ConciergeIncidentEvidence,
+    ConciergeModelVersion,
+    ConciergeNudge,
+    ConciergeRecommendation,
+    ConciergeRecommendationOutcome,
+    ConciergeSession,
+    ConciergeTrainingExample,
+)
 
 config = context.config
 if config.config_file_name is not None:
