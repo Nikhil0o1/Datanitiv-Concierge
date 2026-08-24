@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import OneviewHeaderDetails, OneviewHierarchy, OneviewNewHire, OneviewPlannerDataset, OneviewShrinkage
 from app.schemas import HeadcountOut, PlanDetail, PlanSummary, ProgramOut, RosterClassOut, WeekOut
-from app.services.demo_store import DEMO_PLAN_META, get_json_setting
+from app.services.demo_store import DEMO_PLAN_META, get_json_setting, set_json_setting
 
 KPI_OU = "FTE_Over_Under"
 KPI_PROJ = "Billable_FTE_Projected"
@@ -41,6 +41,20 @@ def week_dates_from_labels(labels: list[str]) -> list[date]:
     month, day = map(int, labels[0].split("/"))
     start = date(2026, month, day)
     return [start + timedelta(weeks=i) for i in range(len(labels))]
+
+
+def avg_forward(vals: list, cur_idx: int, n: int = 12) -> float:
+    chunk = [float(v) for v in vals[cur_idx : cur_idx + n] if v is not None]
+    return round(sum(chunk) / len(chunk), 2) if chunk else 0.0
+
+
+async def update_plan_meta(session: AsyncSession, cap_id: str, patch: dict) -> dict:
+    all_meta = await get_json_setting(session, DEMO_PLAN_META, {})
+    cur = dict(all_meta.get(cap_id) or {})
+    cur.update(patch)
+    all_meta[cap_id] = cur
+    await set_json_setting(session, DEMO_PLAN_META, all_meta)
+    return cur
 
 
 @dataclass
@@ -164,9 +178,45 @@ def has_roster_gap(plan: LoadedPlan) -> bool:
     return bool(cls and cls.get("status") == "missing")
 
 
+def live_hire12(plan: LoadedPlan) -> float:
+    """Hiring · 12wk from mapped roster actuals (live), else meta/demo."""
+    mapped = sum(
+        float(row.actual_hc or 0)
+        for row in plan.roster_rows
+        if (row.class_status or "") in ("mapped", "uploaded", "partial")
+    )
+    if mapped > 0:
+        return mapped
+    cls = plan.meta.get("cls") or {}
+    if (cls.get("status") or "") in ("mapped", "uploaded") and cls.get("actual") is not None:
+        return float(cls.get("actual") or 0)
+    return float(plan.meta.get("hire12", 0) or 0)
+
+
+def live_s_hire(plan: LoadedPlan) -> list[float | None]:
+    """Week series for hiring sparkline — stamp live hire onto current week when mapped."""
+    n = len(plan.week_labels)
+    raw = list(plan.meta.get("sHire") or [])
+    series: list[float | None] = []
+    for i in range(n):
+        series.append(float(raw[i]) if i < len(raw) and raw[i] is not None else 0.0)
+    hire = live_hire12(plan)
+    if hire > 0:
+        cur_idx = int(plan.meta.get("curIdx", 0))
+        if 0 <= cur_idx < n:
+            series[cur_idx] = hire
+    return series
+
+
 def plan_to_summary(plan: LoadedPlan) -> PlanSummary:
     meta = plan.meta
     h = plan.hierarchy
+    cur_idx = int(meta.get("curIdx", 0))
+    shrink12 = avg_forward(plan.shrink_plan, cur_idx)
+    if not shrink12:
+        shrink12 = float(meta.get("shrink12", 0))
+    attr_plan = meta.get("sAttrPlan") or []
+    attr12 = avg_forward(attr_plan, cur_idx) if attr_plan else float(meta.get("attr12", 0))
     return PlanSummary(
         cap_id=plan.cap_id,
         plan_name=h.cp_plan_name,
@@ -177,13 +227,13 @@ def plan_to_summary(plan: LoadedPlan) -> PlanSummary:
         planner=h.planner or meta.get("planner", ""),
         vertical=h.vertical_name or meta.get("vertical", ""),
         is_vol=bool(meta.get("isVol", False)),
-        cur_week_idx=int(meta.get("curIdx", 0)),
+        cur_week_idx=cur_idx,
         ou=float(meta.get("ou", 0)),
         sustained=float(meta.get("sustained", 0)),
         min_ou_fwd=float(meta.get("minOUfwd", 0)),
         closing_fte=float(meta.get("closingFTE", 0)),
-        shrink12=float(meta.get("shrink12", 0)),
-        attr12=float(meta.get("attr12", 0)),
+        shrink12=shrink12,
+        attr12=attr12,
         billable=float(meta.get("billable", 50.0)),
         has_roster_gap=has_roster_gap(plan),
     )
@@ -219,15 +269,28 @@ def plan_to_detail(plan: LoadedPlan) -> PlanDetail:
         )
         for idx, label in enumerate(plan.week_labels)
     ]
-    meta_cls = plan.meta.get("cls")
+    meta = plan.meta
+    meta_cls = meta.get("cls")
     roster = [_roster_out(row, meta_cls) for row in plan.roster_rows]
     hc_out = HeadcountOut(**plan.headcount) if plan.headcount else None
+    n = len(plan.week_labels)
     return PlanDetail(
         **summary.model_dump(),
-        avail_hrs=float(plan.meta.get("availHrs", 40.0)),
+        avail_hrs=float(meta.get("availHrs", 40.0)),
         weeks=weeks,
         headcount=hc_out,
         roster_classes=roster,
+        s_attr=list(meta.get("sAttr") or [None] * n),
+        s_attr_plan=list(meta.get("sAttrPlan") or [None] * n),
+        s_hire=live_s_hire(plan),
+        s_fcst=meta.get("sFcst"),
+        s_act_vol=meta.get("sActVol"),
+        s_aht_goal=meta.get("sAhtGoal"),
+        s_aht_act=meta.get("sAhtAct"),
+        hire12=live_hire12(plan),
+        ou_shrink=float(meta["ouShrink"]) if meta.get("ouShrink") is not None else None,
+        f_bias=meta.get("fBias"),
+        a_bias=meta.get("aBias"),
     )
 
 

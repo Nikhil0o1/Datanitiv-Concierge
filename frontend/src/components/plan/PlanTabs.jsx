@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { f2 } from '../../utils/format';
 import {
   computeXutil,
@@ -10,6 +10,7 @@ import {
   statusOf,
   weeks12,
 } from '../../utils/planLogic';
+import { readRosterFile } from '../../utils/rosterCsv';
 import SeriesChart, { DecisionBar, sparkMini } from '../SeriesChart';
 import ShrinkageEditor from '../ShrinkageEditor';
 
@@ -103,7 +104,7 @@ function OverviewTab({ plan }) {
   );
 }
 
-function ForecastTab({ plan, decisions, onDecide }) {
+function ForecastTab({ plan, decisions, onDecide, onSubmitForecast }) {
   if (!plan.isVol) {
     return (
       <div className="tsec on" data-sec="fw">
@@ -121,10 +122,13 @@ function ForecastTab({ plan, decisions, onDecide }) {
   const [fcst, setFcst] = useState(() => [...(plan.sFcst || [])]);
   const [ahtGoal, setAhtGoal] = useState(() => [...(plan.sAhtGoal || [])]);
   const [submitted, setSubmitted] = useState(false);
+  const [lastEdit, setLastEdit] = useState({ kind: 'vol', idx: plan.curIdx });
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     setFcst([...(plan.sFcst || [])]);
     setAhtGoal([...(plan.sAhtGoal || [])]);
     setSubmitted(false);
+    setLastEdit({ kind: 'vol', idx: plan.curIdx });
   }, [plan.capId]);
 
   const actVol = (plan.sActVol || []).map((v, i) => (i <= plan.curIdx ? v : null));
@@ -132,6 +136,23 @@ function ForecastTab({ plan, decisions, onDecide }) {
   const d = decisions?.fw || {};
   const volMax = Math.max(...(plan.sFcst || []).filter((v) => v != null), 1000) * 1.4;
   const volSnap = volMax > 20000 ? 250 : volMax > 5000 ? 50 : volMax > 1000 ? 10 : 5;
+
+  const applyFcstValue = () => {
+    const idx = lastEdit.kind === 'vol' ? lastEdit.idx : plan.curIdx;
+    const val = fcst[idx];
+    if (val == null) return;
+    setFcst((arr) => arr.map((v, i) => (i >= plan.curIdx ? val : v)));
+    setSubmitted(false);
+    onDecide?.('fw', 'vol', 'mod');
+  };
+  const applyAhtValue = () => {
+    const idx = lastEdit.kind === 'aht' ? lastEdit.idx : plan.curIdx;
+    const val = ahtGoal[idx];
+    if (val == null) return;
+    setAhtGoal((arr) => arr.map((v, i) => (i >= plan.curIdx ? val : v)));
+    setSubmitted(false);
+    onDecide?.('fw', 'aht', 'mod');
+  };
 
   return (
     <div className="tsec on" data-sec="fw">
@@ -155,6 +176,11 @@ function ForecastTab({ plan, decisions, onDecide }) {
           onModify={() => onDecide?.('fw', 'vol', 'mod')}
           onReject={() => onDecide?.('fw', 'vol', 'rej')}
         />
+        <div className="repbar" style={{ marginBottom: 8 }}>
+          <button type="button" className="repbtn" data-act="fw-apply-vol" onClick={applyFcstValue}>
+            ↔ Apply forecast value to all weeks
+          </button>
+        </div>
         <SeriesChart
           weeks={plan.weeks}
           curIdx={plan.curIdx}
@@ -172,6 +198,7 @@ function ForecastTab({ plan, decisions, onDecide }) {
               next[i] = v;
               return next;
             });
+            setLastEdit({ kind: 'vol', idx: i });
             setSubmitted(false);
             onDecide?.('fw', 'vol', 'mod');
           }}
@@ -185,6 +212,11 @@ function ForecastTab({ plan, decisions, onDecide }) {
           onModify={() => onDecide?.('fw', 'aht', 'mod')}
           onReject={() => onDecide?.('fw', 'aht', 'rej')}
         />
+        <div className="repbar" style={{ marginBottom: 8 }}>
+          <button type="button" className="repbtn" data-act="fw-apply-aht" onClick={applyAhtValue}>
+            ↔ Apply AHT value to all weeks
+          </button>
+        </div>
         <SeriesChart
           weeks={plan.weeks}
           curIdx={plan.curIdx}
@@ -202,6 +234,7 @@ function ForecastTab({ plan, decisions, onDecide }) {
               next[i] = v;
               return next;
             });
+            setLastEdit({ kind: 'aht', idx: i });
             setSubmitted(false);
             onDecide?.('fw', 'aht', 'mod');
           }}
@@ -210,17 +243,23 @@ function ForecastTab({ plan, decisions, onDecide }) {
           <div
             className="btn p"
             data-act="fw-submit"
-            onClick={() => {
-              setSubmitted(true);
-              onDecide?.('fw', 'vol', d.vol === 'acc' ? 'acc' : 'mod');
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onSubmitForecast?.({ fcst, aht_goal: ahtGoal });
+                setSubmitted(true);
+                onDecide?.('fw', 'vol', d.vol === 'acc' ? 'acc' : 'mod');
+              } finally {
+                setBusy(false);
+              }
             }}
           >
-            ⬆ Submit forecast / AHT changes
+            {busy ? 'Submitting…' : '⬆ Submit forecast / AHT changes'}
           </div>
         </div>
         {submitted ? (
           <div className="insight pos" data-act="fw-submitted">
-            <b>Submitted.</b> Adjusted forecast/AHT committed for edited weeks · FTE required / projected / Over-Under re-flow simulated.
+            <b>Submitted.</b> Forecast / AHT saved for this plan.
           </div>
         ) : null}
       </div>
@@ -228,12 +267,13 @@ function ForecastTab({ plan, decisions, onDecide }) {
   );
 }
 
-function HeadcountTab({ plan }) {
+function HeadcountTab({ plan, onSaveHeadcount }) {
   const baseCur = plan.hcCur;
   const l = plan.hcLast || baseCur;
   const [editing, setEditing] = useState(false);
   const [cur, setCur] = useState(() => ({ ...(baseCur || {}) }));
   const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     setCur({ ...(plan.hcCur || {}) });
     setEditing(false);
@@ -346,19 +386,37 @@ function HeadcountTab({ plan }) {
               type="button"
               className="btn p"
               data-act="hc-save"
-              onClick={() => {
-                setCur((h) => ({ ...h, closing: recomputeClosing(h) }));
-                setSaved(true);
-                setEditing(false);
+              disabled={busy}
+              onClick={async () => {
+                const next = { ...cur, closing: recomputeClosing(cur) };
+                setCur(next);
+                setBusy(true);
+                try {
+                  await onSaveHeadcount?.({
+                    opening: next.opening,
+                    nest: next.nest,
+                    tin: next.tin,
+                    tout: next.tout,
+                    loa_in: next.loaIn,
+                    loa_out: next.loaOut,
+                    attr: next.attr,
+                    promo: next.promo,
+                    closing: next.closing,
+                  });
+                  setSaved(true);
+                  setEditing(false);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              Save movements
+              {busy ? 'Saving…' : 'Save movements'}
             </button>
           </div>
         ) : null}
         {saved ? (
           <div className="insight pos" data-act="hc-saved">
-            <b>Movements updated.</b> Closing FTE now {f2(cur.closing)} · downstream staffing position re-flow simulated.
+            <b>Movements saved.</b> Closing FTE now {f2(cur.closing)}.
           </div>
         ) : null}
         <table className="fl">
@@ -391,6 +449,7 @@ function HeadcountTab({ plan }) {
 function NewHireTab({ plan, doneRoster, onMapRoster }) {
   const cls = plan.cls;
   const [uploadNote, setUploadNote] = useState('');
+  const fileRef = useRef(null);
   useEffect(() => setUploadNote(''), [plan.capId]);
 
   if (!cls) {
@@ -409,15 +468,40 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
 
   const className = cls.name || cls.className || `TC_2026_${String(plan.capId || '').replace(/\D/g, '')}`;
   const gap = Math.abs(plan.sustained);
-  const rosterFte = Math.max(0, (cls.plan || 0) - (cls.actual || 0));
+  const missingFromRoster = Math.max(0, (cls.plan || 0) - (cls.actual || 0));
   const mapped = doneRoster || cls.status === 'uploaded' || cls.status === 'mapped';
-  const realGap = mapped ? Math.max(0, gap - rosterFte) : gap;
+  const countedFte = mapped ? Math.max(cls.actual || 0, 0) : missingFromRoster;
+  const realGap = mapped ? Math.max(0, gap - countedFte) : gap;
   const stLabel =
     mapped ? '✓ Uploaded' : cls.status === 'partial' ? '◑ Partial' : '✕ Not uploaded';
 
-  const doUpload = () => {
+  const doQuickMap = () => {
     setUploadNote(`Mapped ${f2(cls.plan)} planned hires for ${className} against Class Reference.`);
     onMapRoster?.();
+  };
+
+  const doUploadFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = await readRosterFile(file);
+      if (!parsed.rows.length) {
+        setUploadNote(parsed.errors.join(' ') || 'Empty CSV');
+        return;
+      }
+      setUploadNote(`Reading ${parsed.filename} · ${parsed.rows.length} employees…`);
+      await onMapRoster?.({
+        train_hc: parsed.totalFte,
+        employees: parsed.rows,
+        source_filename: parsed.filename,
+      });
+      setUploadNote(
+        `Mapped ${parsed.rows.length} from ${parsed.filename} · ${f2(parsed.totalFte)} FTE`,
+      );
+    } catch (err) {
+      setUploadNote(err?.message || String(err));
+    }
   };
 
   return (
@@ -432,7 +516,7 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
             Class {className} · {plan.plan}
           </div>
           {!mapped ? (
-            <button type="button" className="btn g" data-act="nh-upload" onClick={doUpload}>
+            <button type="button" className="btn g" data-act="nh-upload" onClick={doQuickMap}>
               ⬆ Upload roster
             </button>
           ) : (
@@ -489,29 +573,39 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
             </div>
             <div className="mline cut">
               <span>Onboarded, not on roster</span>
-              <span>−{f2(rosterFte)} FTE</span>
+              <span>−{f2(missingFromRoster)} FTE</span>
             </div>
             <div className="mline">
               <span>Real gap after map</span>
-              <span>{f2(realGap)} FTE</span>
+              <span>{f2(Math.max(0, gap - missingFromRoster))} FTE</span>
             </div>
           </div>
         ) : null}
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          hidden
+          onChange={doUploadFile}
+        />
         <div className="acts">
-          <div className="btn p" data-act="go-roster" onClick={doUpload}>
+          <div className="btn p" data-act="go-roster" onClick={doQuickMap}>
             Map the roster
           </div>
-          <div className="btn g" data-act="nh-file" onClick={doUpload}>
+          <button
+            type="button"
+            className="btn g"
+            data-act="nh-file"
+            onClick={() => fileRef.current?.click()}
+          >
             Upload file
-          </div>
+          </button>
         </div>
-        {uploadNote && !mapped ? (
-          <div className="insight info">{uploadNote}</div>
-        ) : null}
+        {uploadNote ? <div className="insight info">{uploadNote}</div> : null}
         <div className={`done ${doneRoster || mapped ? 'on' : ''}`} id="doneRoster">
           <span>✓</span>
           <span>
-            {f2(rosterFte)} FTE mapped · projected FTE corrected · gap now {f2(realGap)}
+            {f2(countedFte)} FTE mapped · projected FTE corrected · gap now {f2(realGap)}
           </span>
         </div>
       </div>
@@ -519,8 +613,17 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
   );
 }
 
-function ShrinkageTab({ plan, state, onEditorChange, onSubmitShrinkage, decisions, onDecide }) {
-  const rec = shrRec(plan);
+function ShrinkageTab({
+  plan,
+  state,
+  onEditorChange,
+  onSubmitShrinkage,
+  onResetShrinkage,
+  onApplyShrinkageValue,
+  onApplyShrinkagePct,
+  decisions,
+  onDecide,
+}) {
   const past = (plan.sShrink || []).map((v, i) => (i <= plan.curIdx ? v : null));
   const [planLine, setPlanLine] = useState(() =>
     (plan.sShrinkPlan || []).map((v, i) => (i < plan.curIdx ? null : v)),
@@ -529,7 +632,7 @@ function ShrinkageTab({ plan, state, onEditorChange, onSubmitShrinkage, decision
   useEffect(() => {
     setPlanLine((plan.sShrinkPlan || []).map((v, i) => (i < plan.curIdx ? null : v)));
     setShowSeg(false);
-  }, [plan.capId, plan.curIdx]);
+  }, [plan.capId, plan.curIdx, plan.sShrinkPlan]);
 
   const segs = useMemo(() => segmentShrinkage(plan), [plan]);
 
@@ -543,7 +646,11 @@ function ShrinkageTab({ plan, state, onEditorChange, onSubmitShrinkage, decision
   }, [planLine, state.editorWeeks, plan.curIdx]);
 
   const fwdVals = displayLine.filter((v, i) => i >= plan.curIdx && v != null);
-  const planFwd = fwdVals.length ? fwdVals.reduce((a, b) => a + b, 0) / fwdVals.length : rec.plan;
+  const planFwd = fwdVals.length
+    ? fwdVals.reduce((a, b) => a + b, 0) / fwdVals.length
+    : plan.shrink12 || 0;
+  // Live recommendation: compare 8-wk actual to current edited forward plan avg
+  const rec = shrRec(plan, planFwd);
   const actual8 = rec.actAvg;
   const variance = actual8 - planFwd;
   const decision = decisions?.shr;
@@ -585,7 +692,7 @@ function ShrinkageTab({ plan, state, onEditorChange, onSubmitShrinkage, decision
             <span>Variance</span>
           </div>
         </div>
-        <div className="insight warn" style={{ marginTop: 8 }}>
+        <div className={`insight ${rec.dir === 'ok' ? 'pos' : 'warn'}`} style={{ marginTop: 8 }}>
           <b>Recommendation:</b> {rec.t}.
           {rec.dir !== 'ok' ? (
             <>
@@ -672,7 +779,11 @@ function ShrinkageTab({ plan, state, onEditorChange, onSubmitShrinkage, decision
             onChange={onEditorChange}
             editSrc={state.editSrc}
             netReq={state.netReq}
+            lastEditIdx={state.shrLastEdit}
             onSubmit={onSubmitShrinkage}
+            onReset={onResetShrinkage}
+            onApplyValue={onApplyShrinkageValue}
+            onApplyPct={onApplyShrinkagePct}
             doneShr={state.doneShr}
           />
         ) : null}
@@ -681,20 +792,34 @@ function ShrinkageTab({ plan, state, onEditorChange, onSubmitShrinkage, decision
   );
 }
 
-function AttritionTab({ plan, onDecide }) {
+function AttritionTab({ plan, onDecide, onSubmitAttrition }) {
   const past = (plan.sAttr || []).slice(Math.max(0, plan.curIdx - 8), plan.curIdx + 1).filter((v) => v != null);
   const avg = past.length ? past.reduce((a, b) => a + b, 0) / past.length : plan.attr12 || 0;
   const [planLine, setPlanLine] = useState(() => [...(plan.sAttrPlan || [])]);
+  const [baseLine, setBaseLine] = useState(() => [...(plan.sAttrPlan || [])]);
   const [editing, setEditing] = useState(false);
+  const [lastIdx, setLastIdx] = useState(plan.curIdx);
+  const [submitted, setSubmitted] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
-    setPlanLine([...(plan.sAttrPlan || [])]);
+    const series = [...(plan.sAttrPlan || [])];
+    setPlanLine(series);
+    setBaseLine(series);
     setEditing(false);
-  }, [plan.capId]);
+    setSubmitted(false);
+    setLastIdx(plan.curIdx);
+  }, [plan.capId, plan.sAttrPlan]);
 
   const planned = planLine[plan.curIdx] || 0;
   const variance = planned - avg;
   const act = (plan.sAttr || []).map((v, i) => (i <= plan.curIdx ? v : null));
   const pln = planLine.map((v, i) => (i >= plan.curIdx ? v : null));
+  const lastVal = planLine[lastIdx];
+  const lastBase = baseLine[lastIdx];
+  const pct =
+    lastBase != null && lastBase !== 0 && lastVal != null
+      ? Math.round(((lastVal - lastBase) / lastBase) * 1000) / 10
+      : null;
 
   return (
     <div className="tsec on" data-sec="att">
@@ -710,7 +835,7 @@ function AttritionTab({ plan, onDecide }) {
           </div>
           <div className="kpi">
             <b>{f2(planned)}%</b>
-            <span>Planned</span>
+            <span>Planned · this wk</span>
           </div>
           <div className="kpi">
             <b>
@@ -720,20 +845,57 @@ function AttritionTab({ plan, onDecide }) {
             <span>Variance</span>
           </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6, gap: 8 }}>
-          <button
-            type="button"
-            className="btn g"
-            data-act="att-adjust"
-            onClick={() => setEditing((v) => !v)}
-          >
-            {editing ? 'Done adjusting' : '✎ Adjust future weeks'}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6, gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn g" data-act="att-adjust" onClick={() => setEditing((v) => !v)}>
+            {editing ? 'Hide adjust' : '✎ Adjust future weeks'}
           </button>
         </div>
         {editing ? (
-          <div className="insight info" data-act="att-edit-hint">
-            Drag forward plan points to flex attrition %. Snaps to 0.1pt.
-          </div>
+          <>
+            <div className="insight info" data-act="att-edit-hint">
+              Drag forward plan points, then apply / submit. Snaps to 0.1pt.
+            </div>
+            <div className="repbar">
+              <span className="repk">
+                Last edit {plan.weeks[lastIdx] || '—'} → <b>{f2(lastVal)}%</b>
+                {pct != null ? ` (${pct > 0 ? '+' : ''}${f2(pct)}%)` : ''}
+              </span>
+              <button
+                type="button"
+                className="repbtn"
+                data-act="att-apply-val"
+                onClick={() => {
+                  if (lastVal == null) return;
+                  setPlanLine((arr) => arr.map((v, i) => (i >= plan.curIdx ? lastVal : v)));
+                  onDecide?.('att', null, 'mod');
+                  setSubmitted(false);
+                }}
+              >
+                ↔ Apply value to all weeks
+              </button>
+              <button
+                type="button"
+                className="repbtn"
+                data-act="att-apply-pct"
+                disabled={pct == null}
+                onClick={() => {
+                  if (pct == null) return;
+                  const factor = 1 + pct / 100;
+                  setPlanLine((arr) =>
+                    arr.map((v, i) => {
+                      if (i < plan.curIdx) return v;
+                      const b = baseLine[i] ?? v ?? 0;
+                      return Math.min(40, Math.round(b * factor * 100) / 100);
+                    }),
+                  );
+                  onDecide?.('att', null, 'mod');
+                  setSubmitted(false);
+                }}
+              >
+                % Apply {pct != null ? `${pct > 0 ? '+' : ''}${f2(pct)}%` : 'change'} to all weeks
+              </button>
+            </div>
+          </>
         ) : null}
         <SeriesChart
           weeks={plan.weeks}
@@ -754,11 +916,51 @@ function AttritionTab({ plan, onDecide }) {
                     next[i] = v;
                     return next;
                   });
+                  setLastIdx(i);
+                  setSubmitted(false);
                   onDecide?.('att', null, 'mod');
                 }
               : null
           }
         />
+        {editing ? (
+          <div className="acts">
+            <div
+              className="btn p"
+              data-act="att-submit"
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const weeks = planLine
+                    .map((v, i) => (i >= plan.curIdx && v != null ? { week_idx: i, attr_plan: v } : null))
+                    .filter(Boolean);
+                  await onSubmitAttrition?.(weeks);
+                  setBaseLine([...planLine]);
+                  setSubmitted(true);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? 'Submitting…' : '⬆ Submit attrition plan'}
+            </div>
+            <div
+              className="btn g"
+              data-act="att-reset"
+              onClick={() => {
+                setPlanLine([...baseLine]);
+                setSubmitted(false);
+              }}
+            >
+              Reset
+            </div>
+          </div>
+        ) : null}
+        {submitted ? (
+          <div className="insight pos" data-act="att-submitted">
+            <b>Submitted.</b> Attrition plan saved · Overview attrition will refresh.
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1016,6 +1218,12 @@ export default function PlanTabs({
   otWeeks = [],
   onEditorChange,
   onSubmitShrinkage,
+  onResetShrinkage,
+  onApplyShrinkageValue,
+  onApplyShrinkagePct,
+  onSubmitAttrition,
+  onSubmitForecast,
+  onSaveHeadcount,
   onMapRoster,
   onAcceptRec,
   onRejectRec,
@@ -1032,8 +1240,10 @@ export default function PlanTabs({
   return (
     <>
       {activeTab === 'ov' && <OverviewTab plan={plan} />}
-      {activeTab === 'fw' && <ForecastTab plan={plan} decisions={decisions} onDecide={onDecide} />}
-      {activeTab === 'hc' && <HeadcountTab plan={plan} />}
+      {activeTab === 'fw' && (
+        <ForecastTab plan={plan} decisions={decisions} onDecide={onDecide} onSubmitForecast={onSubmitForecast} />
+      )}
+      {activeTab === 'hc' && <HeadcountTab plan={plan} onSaveHeadcount={onSaveHeadcount} />}
       {activeTab === 'nh' && <NewHireTab plan={plan} doneRoster={state.doneRoster} onMapRoster={onMapRoster} />}
       {activeTab === 'shr' && (
         <ShrinkageTab
@@ -1041,11 +1251,16 @@ export default function PlanTabs({
           state={state}
           onEditorChange={onEditorChange}
           onSubmitShrinkage={onSubmitShrinkage}
+          onResetShrinkage={onResetShrinkage}
+          onApplyShrinkageValue={onApplyShrinkageValue}
+          onApplyShrinkagePct={onApplyShrinkagePct}
           decisions={decisions}
           onDecide={onDecide}
         />
       )}
-      {activeTab === 'att' && <AttritionTab plan={plan} onDecide={onDecide} />}
+      {activeTab === 'att' && (
+        <AttritionTab plan={plan} onDecide={onDecide} onSubmitAttrition={onSubmitAttrition} />
+      )}
       {activeTab === 'rec' && (
         <RecommendTab
           plan={plan}

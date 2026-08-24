@@ -89,6 +89,61 @@ class PlanDetail(PlanSummary):
     weeks: list[WeekOut]
     headcount: HeadcountOut | None = None
     roster_classes: list[RosterClassOut] = Field(default_factory=list)
+    # Optional series from demo meta (editable in Concierge)
+    s_attr: list[float | None] = Field(default_factory=list)
+    s_attr_plan: list[float | None] = Field(default_factory=list)
+    s_hire: list[float | None] = Field(default_factory=list)
+    s_fcst: list[float | None] | None = None
+    s_act_vol: list[float | None] | None = None
+    s_aht_goal: list[float | None] | None = None
+    s_aht_act: list[float | None] | None = None
+    hire12: float = 0.0
+    ou_shrink: float | None = None
+    f_bias: float | None = None
+    a_bias: float | None = None
+
+
+class AttritionWeekUpdate(BaseModel):
+    week_idx: int
+    attr_plan: float
+
+
+class AttritionSubmitRequest(BaseModel):
+    weeks: list[AttritionWeekUpdate]
+
+
+class AttritionSubmitResponse(BaseModel):
+    cap_id: str
+    attr12: float
+    updated_count: int
+
+
+class ForecastSubmitRequest(BaseModel):
+    fcst: list[float | None] | None = None
+    aht_goal: list[float | None] | None = None
+
+
+class ForecastSubmitResponse(BaseModel):
+    cap_id: str
+    message: str
+
+
+class HeadcountUpdateRequest(BaseModel):
+    opening: float | None = None
+    nest: float | None = None
+    tin: float | None = None
+    tout: float | None = None
+    loa_in: float | None = None
+    loa_out: float | None = None
+    attr: float | None = None
+    promo: float | None = None
+    closing: float | None = None
+
+
+class HeadcountUpdateResponse(BaseModel):
+    cap_id: str
+    headcount: HeadcountOut
+    message: str
 
 
 class TriagePlanItem(BaseModel):
@@ -185,11 +240,24 @@ class ShrinkageSubmitResponse(BaseModel):
     cap_id: str
     updated_weeks: list[WeekOut]
     net_requirement_change: float
+    shrink12: float | None = None
+
+
+class RosterEmployeeIn(BaseModel):
+    employee_id: str
+    name: str | None = None
+    role: str | None = None
+    location: str | None = None
+    class_reference: str | None = None
+    hire_date: str | None = None
+    fte: float = 1.0
 
 
 class RosterMapRequest(BaseModel):
     class_id: int | None = None
     train_hc: float | None = None
+    employees: list[RosterEmployeeIn] | None = None
+    source_filename: str | None = None
 
 
 class RosterMapResponse(BaseModel):
@@ -197,6 +265,8 @@ class RosterMapResponse(BaseModel):
     mapped_fte: float
     projected_adjustment: float
     status: str
+    employee_count: int = 0
+    source_filename: str | None = None
 
 
 class VoiceSTTResponse(BaseModel):

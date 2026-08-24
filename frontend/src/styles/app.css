@@ -249,6 +249,11 @@ table.fl tr.grp-row td{font-weight:700;background:var(--wash)}
 .erow.hl{background:var(--amber-s);border-radius:6px;padding:3px 5px;margin:-3px -5px}
 .enote{font-family:var(--fm);font-size:.62rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .enote b{color:var(--ink)}
+.repbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--wash);font-family:var(--fm);font-size:.72rem;color:var(--muted)}
+.repbar .repk b{color:var(--ink)}
+.repbtn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:5px 10px;font-family:var(--fm);font-size:.68rem;font-weight:650;cursor:pointer;color:var(--ink)}
+.repbtn:hover{border-color:var(--ink)}
+.repbtn:disabled{opacity:.4;cursor:not-allowed}
 
 /* queue */
 .qcards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
@@ -432,6 +437,10 @@ footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--dim);fon
 .chat-in input:focus{outline:none;border-color:var(--amber);box-shadow:0 0 0 2px var(--amber-s)}
 .chat-in button{border:none;border-radius:8px;background:var(--amber);color:var(--ink);font-weight:700;padding:8px 12px;cursor:pointer}
 .chat-in button:disabled{opacity:.45;cursor:default}
+.chat-in .chat-attach{background:var(--bg2,#f3f1ec);border:1px solid var(--line2);padding:8px 10px;font-size:.9rem;line-height:1}
+.chat-file-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 16px 0;padding:6px 10px;border:1px solid var(--line2);border-radius:8px;background:#fff;font-size:.72rem;color:var(--ink)}
+.chat-file-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.chat-file-chip button{border:none;background:transparent;cursor:pointer;font-size:1rem;line-height:1;color:var(--dim);padding:0 2px}
 .navviews{display:flex;gap:6px;margin-left:auto}
 .navviews span{font-family:var(--fm);font-size:.56rem;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line2);border-radius:7px;padding:4px 9px;background:#fff;color:var(--muted);cursor:default}
 .ws.human .navviews span{cursor:pointer}

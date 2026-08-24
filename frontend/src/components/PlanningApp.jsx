@@ -14,14 +14,15 @@ import { computeXutil, defaultOtWeekly, fwdCount } from '../utils/planLogic';
 
 const SHOW_SCENARIO_REPLAY = false;
 
+/** Forward planning horizon: this week through next 12 weeks (same window as shrink12 / Overview). */
 function buildEditorWeeks(plan) {
   if (!plan) return [];
   const i0 = plan.curIdx;
   const rows = [];
-  for (let i = 7; i < 12; i++) {
+  for (let i = 0; i < 12; i++) {
     if (i0 + i >= plan.weeks.length) break;
     const idx = i0 + i;
-    const baseShrink = plan.sShrink[idx] ?? plan.sShrinkPlan[idx];
+    const baseShrink = plan.sShrinkPlan[idx] ?? plan.sShrink[idx] ?? 0;
     rows.push({
       weekIdx: idx,
       wk: plan.weeks[idx],
@@ -46,11 +47,13 @@ export default function PlanningApp({ logoSrc }) {
   const [streamMode, setStreamMode] = useState(false);
   const [wsStepLabel, setWsStepLabel] = useState('Ready');
   const [chatInput, setChatInput] = useState('');
+  const [chatFile, setChatFile] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [planDecisions, setPlanDecisions] = useState({});
   const [otWeeksByCap, setOtWeeksByCap] = useState({});
   const paneRef = useRef(null);
   const chatEndRef = useRef(null);
+  const chatFileRef = useRef(null);
   const stateRef = useRef(null);
 
   const [state, setState] = useState({
@@ -77,6 +80,7 @@ export default function PlanningApp({ logoSrc }) {
     editorWeeks: [],
     editSrc: 'plan values',
     netReq: null,
+    shrLastEdit: null,
     doneShr: false,
     doneRoster: false,
     doneRec: false,
@@ -226,9 +230,54 @@ export default function PlanningApp({ logoSrc }) {
     setState((s) => {
       const ew = [...s.editorWeeks];
       if (ew[k]) ew[k] = { ...ew[k], cur: v };
-      return { ...s, editorWeeks: ew, editSrc: 'edited by you' };
+      return { ...s, editorWeeks: ew, editSrc: 'edited by you', shrLastEdit: k, doneShr: false };
     });
   };
+
+  const handleApplyShrinkageValue = useCallback(() => {
+    setState((s) => {
+      const ew = s.editorWeeks || [];
+      if (!ew.length) return s;
+      const idx = s.shrLastEdit != null && ew[s.shrLastEdit] ? s.shrLastEdit : 0;
+      const val = ew[idx].cur;
+      return {
+        ...s,
+        editorWeeks: ew.map((w) => ({ ...w, cur: val })),
+        editSrc: `applied ${val.toFixed(1)}% to all weeks`,
+        doneShr: false,
+      };
+    });
+  }, [setState]);
+
+  const handleApplyShrinkagePct = useCallback(() => {
+    setState((s) => {
+      const ew = s.editorWeeks || [];
+      if (!ew.length) return s;
+      const idx = s.shrLastEdit != null && ew[s.shrLastEdit] ? s.shrLastEdit : 0;
+      const src = ew[idx];
+      const base = src.base;
+      if (base == null || base === 0) {
+        // no % vs base — fall back to absolute value apply
+        const val = src.cur;
+        return {
+          ...s,
+          editorWeeks: ew.map((w) => ({ ...w, cur: val })),
+          editSrc: `applied ${val.toFixed(1)}% to all weeks`,
+          doneShr: false,
+        };
+      }
+      const pct = (src.cur - base) / base;
+      return {
+        ...s,
+        editorWeeks: ew.map((w) => {
+          const next = Math.min(95, Math.round(w.base * (1 + pct) * 100) / 100);
+          return { ...w, cur: next };
+        }),
+        editSrc: `applied ${(pct * 100 >= 0 ? '+' : '')}${(pct * 100).toFixed(1)}% to all weeks`,
+        doneShr: false,
+      };
+    });
+  }, [setState]);
 
   const handleSubmitShrinkage = useCallback(async () => {
     setState((s) => ({ ...s, doneShr: true }));
@@ -243,13 +292,55 @@ export default function PlanningApp({ logoSrc }) {
     }
   }, [setState, refreshPortfolio]);
 
-  const handleMapRoster = useCallback(async () => {
+  const handleResetShrinkage = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      editorWeeks: (s.editorWeeks || []).map((w) => ({ ...w, cur: w.base })),
+      editSrc: 'plan values',
+      doneShr: false,
+      shrLastEdit: null,
+    }));
+  }, [setState]);
+
+  const handleSubmitAttrition = useCallback(async (weeks) => {
+    await api.submitAttrition(stateRef.current.activePlan, weeks);
+    await refreshPortfolio();
+  }, [refreshPortfolio]);
+
+  const handleSubmitForecast = useCallback(async (body) => {
+    await api.submitForecast(stateRef.current.activePlan, body);
+    await refreshPortfolio();
+  }, [refreshPortfolio]);
+
+  const handleSaveHeadcount = useCallback(async (body) => {
+    await api.updateHeadcount(stateRef.current.activePlan, body);
+    await refreshPortfolio();
+  }, [refreshPortfolio]);
+
+  const handleMapRoster = useCallback(async (capIdOrOpts, maybeBody) => {
+    let id = stateRef.current.activePlan;
+    let body = {};
+    if (typeof capIdOrOpts === 'string') {
+      id = capIdOrOpts;
+      body = maybeBody || {};
+    } else if (capIdOrOpts && typeof capIdOrOpts === 'object') {
+      body = capIdOrOpts;
+      id = capIdOrOpts.cap_id || capIdOrOpts.capId || id;
+    }
+    const payload = {
+      ...(body.train_hc != null ? { train_hc: body.train_hc } : {}),
+      ...(body.employees ? { employees: body.employees } : {}),
+      ...(body.source_filename ? { source_filename: body.source_filename } : {}),
+    };
     setState((s) => ({ ...s, doneRoster: true }));
     try {
-      await api.mapRoster(stateRef.current.activePlan, {});
+      const res = await api.mapRoster(id, payload);
       await refreshPortfolio();
+      return res;
     } catch (e) {
       console.error(e);
+      setState((s) => ({ ...s, doneRoster: false }));
+      throw e;
     }
   }, [setState, refreshPortfolio]);
 
@@ -402,6 +493,8 @@ export default function PlanningApp({ logoSrc }) {
     openPlan: (capId) => {
       const p = data.find((r) => r.capId === capId);
       const tabs = tabsForPlan(p);
+      const rosterOk =
+        p?.cls?.status === 'mapped' || p?.cls?.status === 'uploaded';
       setState((s) => ({
         ...s,
         view: 'plan',
@@ -415,7 +508,7 @@ export default function PlanningApp({ logoSrc }) {
         chartShr: { capId, ready: true },
         doneRec: false,
         doneShr: false,
-        doneRoster: false,
+        doneRoster: rosterOk,
       }));
       if (p) {
         setOtWeeksByCap((prev) => ({
@@ -662,6 +755,12 @@ export default function PlanningApp({ logoSrc }) {
                         otWeeks={otWeeksByCap[activePlan.capId] || []}
                         onEditorChange={setEditorWeek}
                         onSubmitShrinkage={handleSubmitShrinkage}
+                        onResetShrinkage={handleResetShrinkage}
+                        onApplyShrinkageValue={handleApplyShrinkageValue}
+                        onApplyShrinkagePct={handleApplyShrinkagePct}
+                        onSubmitAttrition={handleSubmitAttrition}
+                        onSubmitForecast={handleSubmitForecast}
+                        onSaveHeadcount={handleSaveHeadcount}
                         onMapRoster={handleMapRoster}
                         onAcceptRec={handleAcceptRec}
                         onRejectRec={handleRejectRec}
@@ -760,27 +859,62 @@ export default function PlanningApp({ logoSrc }) {
                   >
                     {voice.recording ? '⏹' : '🎙'}
                   </button>
-                  <span className="vhint">{voice.recording ? 'Listening… click to send' : 'Mic or type below'}</span>
+                  <span className="vhint">{voice.recording ? 'Listening… click to send' : 'Mic, type, or attach CSV'}</span>
                 </div>
+                {chatFile ? (
+                  <div className="chat-file-chip">
+                    <span title={chatFile.name}>📎 {chatFile.name}</span>
+                    <button type="button" aria-label="Remove file" onClick={() => setChatFile(null)}>
+                      ×
+                    </button>
+                  </div>
+                ) : null}
                 <form
                   className="chat-in"
                   onSubmit={async (e) => {
                     e.preventDefault();
                     const msg = chatInput.trim();
-                    if (!msg || voice.voiceBusy) return;
+                    if ((!msg && !chatFile) || voice.voiceBusy) return;
+                    const file = chatFile;
                     setChatInput('');
-                    await voice.sendMessage(msg, 'text');
+                    setChatFile(null);
+                    await voice.sendMessage(msg, 'text', { file });
                   }}
                 >
+                  <input
+                    ref={chatFileRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    hidden
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] || null;
+                      e.target.value = '';
+                      if (f) setChatFile(f);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="chat-attach"
+                    title="Attach roster CSV"
+                    aria-label="Attach roster CSV"
+                    disabled={voice.voiceBusy}
+                    onClick={() => chatFileRef.current?.click()}
+                  >
+                    📎
+                  </button>
                   <input
                     type="text"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Ask Vera — filter ACE Retail, open CAP00010…"
+                    placeholder="Ask Vera — or attach sample_roster.csv…"
                     disabled={voice.voiceBusy}
                     aria-label="Message Vera"
                   />
-                  <button type="submit" disabled={voice.voiceBusy || !chatInput.trim()} aria-label="Send">
+                  <button
+                    type="submit"
+                    disabled={voice.voiceBusy || (!chatInput.trim() && !chatFile)}
+                    aria-label="Send"
+                  >
                     →
                   </button>
                 </form>

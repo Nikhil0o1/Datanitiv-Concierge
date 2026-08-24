@@ -41,6 +41,12 @@ export const api = {
   memories: () => request('/api/memories'),
   submitShrinkage: (capId, weeks) =>
     request(`/api/plans/${capId}/shrinkage`, { method: 'POST', body: JSON.stringify({ weeks }) }),
+  submitAttrition: (capId, weeks) =>
+    request(`/api/plans/${capId}/attrition`, { method: 'POST', body: JSON.stringify({ weeks }) }),
+  submitForecast: (capId, body) =>
+    request(`/api/plans/${capId}/forecast`, { method: 'POST', body: JSON.stringify(body) }),
+  updateHeadcount: (capId, body) =>
+    request(`/api/plans/${capId}/headcount`, { method: 'POST', body: JSON.stringify(body) }),
   mapRoster: (capId, body) =>
     request(`/api/plans/${capId}/roster/map`, { method: 'POST', body: JSON.stringify(body) }),
   agentChat: (message, contextCapId, uiState) =>
@@ -53,6 +59,7 @@ export const api = {
           view: uiState?.view,
           filter: uiState?.filter,
           active_tab: uiState?.active_tab,
+          ...(uiState?.roster_file ? { roster_file: uiState.roster_file } : {}),
         },
         history: uiState?.history || [],
         source: uiState?.source || 'text',
