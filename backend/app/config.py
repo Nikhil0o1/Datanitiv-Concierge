@@ -10,9 +10,37 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
+    # Concierge configuration
+    concierge_enabled: bool = True
+    concierge_worker_enabled: bool = True
+    concierge_llm_enabled: bool = True
+    concierge_structured_logs: bool = False
+    concierge_log_level: str = "INFO"
+    concierge_telemetry_level: str = "standard"  # minimal | standard | verbose
+    concierge_event_retention_days: int = 30
+    concierge_monitor_interval_seconds: int = 90
+    concierge_nudge_auto_guide: bool = False
+    concierge_nudge_snooze_minutes: int = 60
+    concierge_friction_interval_seconds: int = 60
+    concierge_learning_interval_seconds: int = 3600
+    concierge_retention_interval_seconds: int = 86400
+    concierge_nudge_poll_hint_seconds: int = 20
+    otel_enabled: bool = False
+    otel_service_name: str = "capability-concierge"
+    otel_exporter: str = "console"  # console | otlp
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def reliability_weights(self) -> dict[str, float]:
+        return {
+            "similarity": 0.35,
+            "success_rate": 0.35,
+            "evidence": 0.20,
+            "recency": 0.10,
+        }
 
 
 settings = Settings()

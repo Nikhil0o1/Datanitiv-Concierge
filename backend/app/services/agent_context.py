@@ -6,8 +6,8 @@ import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.plan_repository import load_all_plans, load_plan_summary, list_programs
-from app.services.triage import triage_plans
+from app.services.plan_repository import load_all_plans, load_plan_detail, list_programs
+from app.services.triage import triage_plans, status_of, shr_gap
 
 
 async def build_agent_context(
@@ -16,6 +16,7 @@ async def build_agent_context(
     active_cap_id: str | None = None,
     active_view: str | None = None,
     active_filter: str | None = None,
+    active_tab: str | None = None,
 ) -> str:
     plans = await load_all_plans(session)
     if not plans:
@@ -71,19 +72,46 @@ async def build_agent_context(
         lines.append(f"  - {p['capId']} {p['name']} | {item.why}")
 
     if active_cap_id:
-        summary = await load_plan_summary(session, active_cap_id)
-        if summary:
+        detail = await load_plan_detail(session, active_cap_id)
+        if detail:
+            st = status_of(
+                {
+                    "sustained": detail.sustained,
+                    "minOUfwd": detail.min_ou_fwd,
+                    "shrink12": detail.shrink12,
+                    "curIdx": detail.cur_week_idx,
+                    "sShrink": [w.shrink_actual for w in detail.weeks],
+                }
+            )
+            sg = shr_gap(
+                {
+                    "curIdx": detail.cur_week_idx,
+                    "sShrink": [w.shrink_actual for w in detail.weeks],
+                    "shrink12": detail.shrink12,
+                }
+            )
             lines.extend(
                 [
                     "",
-                    f"UI FOCUS: plan {summary.cap_id} ({summary.plan_name})",
-                    f"  program={summary.program}, sustained={summary.sustained:.2f}, shrink12={summary.shrink12:.2f}%, "
-                    f"worst forward week={summary.min_ou_fwd:.2f}, roster gap={summary.has_roster_gap}",
+                    f"UI FOCUS — DETAILED PLAN {detail.cap_id} ({detail.plan_name})",
+                    f"  program={detail.program}, site={detail.site}, lob={detail.lob}, planner={detail.planner}",
+                    f"  sustained={detail.sustained:.2f} FTE, status={st}, shrink12={detail.shrink12:.2f}%, shrink_gap={sg:.2f}pp",
+                    f"  worst forward week={detail.min_ou_fwd:.2f}, roster gap={detail.has_roster_gap}",
+                    f"  closing FTE={detail.closing_fte:.2f}, billable={detail.billable:.2f}",
                 ]
             )
+            if detail.weeks:
+                fwd = detail.weeks[detail.cur_week_idx : detail.cur_week_idx + 5]
+                lines.append("  forward weeks (label, O/U, shrink actual/plan):")
+                for w in fwd:
+                    lines.append(
+                        f"    wk {w.week_label}: O/U {w.ou:+.2f}, shrink {w.shrink_actual or '—'}/{w.shrink_plan or '—'}%"
+                    )
 
     if active_view:
         lines.append(f"Current UI view: {active_view}")
+    if active_tab:
+        lines.append(f"Active plan tab: {active_tab}")
     if active_filter and active_filter != "all":
         lines.append(f"Active program filter: {active_filter}")
 

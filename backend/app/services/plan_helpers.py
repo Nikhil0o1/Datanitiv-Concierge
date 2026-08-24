@@ -17,6 +17,8 @@ def plan_to_triage_dict(plan: LoadedPlan) -> dict:
         "curIdx": int(meta.get("curIdx", 0)),
         "weeks": plan.week_labels,
         "sShrink": plan.shrink_actual,
+        "sShrinkPlan": plan.shrink_plan,
+        "hasRosterGap": has_roster_gap(plan),
         "cls": meta.get("cls") if has_roster_gap(plan) else None,
     }
 

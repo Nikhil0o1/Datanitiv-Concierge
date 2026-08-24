@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { f2 } from '../utils/format';
 import { planRec, statusOf, weeks12 } from '../utils/planLogic';
 import SeriesChart, { sparkMini } from './SeriesChart';
@@ -86,6 +86,7 @@ export default function PortfolioLanding({
   programs = [],
   filter = 'all',
   search = '',
+  expandAll = false,
   triageCounts = { dec: 0, auto: 0, quiet: 0 },
   onOpenPlan,
   gotBy = {},
@@ -93,14 +94,7 @@ export default function PortfolioLanding({
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [expanded, setExpanded] = useState(() => new Set());
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return plans.filter((p) => {
-      if (filter !== 'all' && p.program !== filter) return false;
-      if (!q) return true;
-      return [p.plan, p.capId, p.program, p.site, p.planner, p.lob].some((f) => (f || '').toLowerCase().includes(q));
-    });
-  }, [plans, filter, search]);
+  const filtered = useMemo(() => plans, [plans]);
 
   const groups = useMemo(() => {
     const map = {};
@@ -112,11 +106,16 @@ export default function PortfolioLanding({
     const order = Object.keys(map).sort(
       (a, b) => Math.min(...map[a].map((x) => x.sustained)) - Math.min(...map[b].map((x) => x.sustained)),
     );
-    // Prefer known program order when present
     const prefer = programs.map((p) => p.name).filter((n) => map[n]);
     const rest = order.filter((n) => !prefer.includes(n));
     return [...prefer, ...rest].map((name) => ({ name, plans: map[name] }));
   }, [filtered, programs]);
+
+  useEffect(() => {
+    if (!expandAll || !search.trim()) return;
+    setCollapsed(new Set());
+    setExpanded(new Set(filtered.map((p) => p.capId)));
+  }, [expandAll, search, filtered]);
 
   const nPri = filtered.filter((p) => {
     const st = statusOf(p);
