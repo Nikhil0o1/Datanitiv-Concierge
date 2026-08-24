@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { emit, emitError } from '../lib/telemetry';
 import { applyAgentActions } from './scenarioActions';
 
 /** Map timeline messages to Claude conversation history (natural replies only). */
@@ -78,6 +79,11 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanA
       let reply = '';
       let actionList = [];
 
+      const chatStart = performance.now();
+      emit('agent.chat.started', {
+        metadata: { source, cap_id: st.activePlan, view: st.view, filter: st.filter },
+      });
+
       try {
         const chat = await api.agentChat(trimmed, st.activePlan, {
           view: st.view,
@@ -88,7 +94,16 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanA
         });
         reply = chat.reply || '';
         actionList = chat.actions || [];
+        emit('agent.chat.completed', {
+          latency_ms: Math.round(performance.now() - chatStart),
+          metadata: {
+            source,
+            action_count: actionList.length,
+            action_types: actionList.map((a) => a.type),
+          },
+        });
       } catch (e) {
+        emitError('agent.chat.failed', e, { source });
         const errMsg = e?.message || String(e);
         if (push) await push('d', 'Connection', errMsg.slice(0, 220));
         reply =
