@@ -1,0 +1,4 @@
+employee_id,name,role,location,class_reference,hire_date,fte
+EMP-10001,Asha Patel,Agent,Bangalore,TC_2026_00010,2026-09-08,1.0
+EMP-10002,James Okonkwo,Agent,Bangalore,TC_2026_00010,2026-09-08,1.0
+EMP-10003,Maria Santos,Agent,Manila,TC_2026_00010,2026-09-15,0.5

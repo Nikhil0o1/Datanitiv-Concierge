@@ -110,26 +110,40 @@ export function createScenarioActions({
         await wait(useCursor() ? 230 : 40);
       }
     },
-    mapRoster: async (capId) => {
-      const id = capId || stateRef.current.activePlan;
+    mapRoster: async (capId, body = {}) => {
+      const id = (typeof capId === 'string' ? capId : null) || stateRef.current.activePlan;
+      const payload = typeof capId === 'object' && capId ? capId : body || {};
+      const apply = async () => {
+        if (domHandlersRef?.current?.mapRoster) {
+          await domHandlersRef.current.mapRoster(id, payload);
+        } else {
+          await api.mapRoster(id, payload);
+        }
+      };
       if (!useCursor()) {
         try {
-          await api.mapRoster(id, {});
+          await apply();
         } catch {
           /* ignore */
         }
-        domHandlersRef?.current?.mapRoster?.(id);
-        await push('a', 'Agent · background', `mapped roster · ${id}`);
+        const n = payload.employees?.length;
+        await push(
+          'a',
+          'Agent · background',
+          n
+            ? `mapped roster · ${id} · ${n} employees · ${Number(payload.train_hc || 0).toFixed(2)} FTE`
+            : `mapped roster · ${id}`,
+        );
         return;
       }
       domHandlersRef?.current?.openTab?.('nh');
       await wait(300);
       cursor?.show?.();
-      await tap('[data-act="go-roster"]', '2.42 FTE mapped · projected FTE corrected');
+      await tap('[data-act="go-roster"]', 'roster mapped · projected FTE corrected');
       try {
-        await api.mapRoster(id, {});
+        await apply();
       } catch {
-        /* UI updates via handler */
+        /* ignore */
       }
     },
     submitShrinkage: async (capId) => {
@@ -237,7 +251,11 @@ export async function applyAgentActions(actions, actionList, setState, stateRef,
         }
         break;
       case 'map_roster':
-        if (p.cap_id) await actions.mapRoster(p.cap_id);
+        if (p.cap_id) {
+          await actions.mapRoster(p.cap_id, {
+            ...(p.train_hc != null ? { train_hc: p.train_hc } : {}),
+          });
+        }
         break;
       case 'execute_queue':
         await actions.view('queue');

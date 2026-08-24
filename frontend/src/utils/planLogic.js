@@ -21,10 +21,13 @@ export function weeks12(plan) {
   return { under, over, ok, n: s.length, s };
 }
 
-export function shrRec(plan) {
+/** Shrinkage recommendation: 8-wk actual vs planned forward %.
+ *  Pass `livePlan` (avg of edited forward weeks) so the banner updates live with sliders/drag.
+ */
+export function shrRec(plan, livePlan = null) {
   const past = (plan.sShrink || []).slice(Math.max(0, plan.curIdx - 8), plan.curIdx + 1).filter((v) => v != null);
   const actAvg = past.length ? past.reduce((a, b) => a + b, 0) / past.length : 0;
-  const planned = plan.shrink12 || 0;
+  const planned = livePlan != null && !Number.isNaN(livePlan) ? livePlan : plan.shrink12 || 0;
   const gap = actAvg - planned;
   const dir = gap > 1 ? 'up' : gap < -1 ? 'down' : 'ok';
   const t =

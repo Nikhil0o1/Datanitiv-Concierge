@@ -55,7 +55,9 @@ Respond with JSON ONLY — no markdown fences, no text outside the JSON object:
 - open_plan: {"cap_id": "CAP00010"}
 - open_tab: {"tab": "ov"|"fw"|"hc"|"nh"|"shr"|"att"|"rec"|"exe"}
 - set_shrinkage_weeks: {"cap_id"?: string, "weeks": [[weekIndex, percent], ...], "submit": true|false}
-- map_roster: {"cap_id": string}
+- map_roster: {"cap_id": string, "train_hc"?: number} — quick map without a CSV
+- Planners can attach a roster CSV in chat (paperclip). When ui_state.roster_file is set, the file was already parsed and mapped — acknowledge employee_count and total_fte; do not call map_roster again.
+- Without a file, map_roster still works as a quick map of planned class HC.
 - execute_queue: {}
 - view: {"view": "port"|"plan"|"queue"|"time"}
 - mark_tabs: {"tabs": ["ov","nh","shr","rec"]}
