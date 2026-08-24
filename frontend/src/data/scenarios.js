@@ -225,13 +225,13 @@ export function buildScenarioSteps(key, A) {
             .then(() => A.buildEditor('CAP00010')),
       },
       { l: 'Listening', f: () => A.hear(1100) },
-      { l: 'You ask', f: () => A.push('u', 'Planner · voice', 'Let me do this bit myself.', true) },
+      { l: 'You ask', f: () => A.push('u', 'Planner · voice', 'I will tweak these myself while you keep working.', true) },
       {
-        l: 'Hands over',
+        l: 'Hybrid',
         f: () =>
-          A.say('All yours. Drag the sliders or type the numbers — I will keep the requirement and the chart in step.')
-            .then(() => A.human(true))
-            .then(() => A.push('s', 'Control', 'handed to planner · agent watching, not acting')),
+          A.say('Go ahead — the sliders are yours. I will keep working in the background and stay out of your way on screen.')
+            .then(() => A.hideCursor())
+            .then(() => A.push('s', 'Hybrid', 'planner + agent · you keep the mouse')),
       },
       {
         l: 'You are driving',
@@ -241,15 +241,11 @@ export function buildScenarioSteps(key, A) {
       {
         l: 'Nudges',
         f: () =>
-          A.say('Every tab and every control on the left is yours now. I am still reading, I am just not touching anything.'),
-      },
-      {
-        l: 'Takes it back',
-        f: () => A.human(false).then(() => A.push('s', 'Control', 'returned to agent')),
+          A.say('Every control on the left is always yours. Ask me anything and I will handle it without taking over.'),
       },
       {
         l: 'Complete',
-        f: () => A.say('Say the word any time and I will step aside again.').then(() => A.hideCursor()),
+        f: () => A.say('Click any plan, filter, or tab anytime — I work alongside you, not instead of you.').then(() => A.hideCursor()),
       },
     ],
     approve: [

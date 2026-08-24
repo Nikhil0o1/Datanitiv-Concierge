@@ -87,6 +87,13 @@ export function useScenarioEngine(state, setState, { workspaceRef, domHandlersRe
 
   const cursor = useAgentCursor(workspaceRef, { wait, getSpeed: () => speedRef.current });
 
+  const humanActiveUntilRef = useRef(0);
+  const isHumanActive = useCallback(() => Date.now() < humanActiveUntilRef.current, []);
+  const markHumanActive = useCallback(() => {
+    humanActiveUntilRef.current = Date.now() + 4500;
+    cursor.hide?.();
+  }, [cursor]);
+
   actionsRef.current = createScenarioActions({
     setState,
     stateRef,
@@ -96,7 +103,7 @@ export function useScenarioEngine(state, setState, { workspaceRef, domHandlersRe
     hear,
     cursor,
     domHandlersRef,
-    shouldUseCursor: () => !stateRef.current.humanMode,
+    shouldUseCursor: () => !isHumanActive(),
   });
 
   const reset = useCallback(() => {
@@ -121,7 +128,6 @@ export function useScenarioEngine(state, setState, { workspaceRef, domHandlersRe
       agentHear: false,
       agentStatus: 'Standing by',
       savedMin: 0,
-      humanMode: false,
       cursorOn: false,
       foldVisible: false,
       revealed: {},
@@ -239,6 +245,8 @@ export function useScenarioEngine(state, setState, { workspaceRef, domHandlersRe
     actionsRef,
     pushRef,
     cursor,
+    markHumanActive,
+    isHumanActive,
     stepCount: buildScenarioSteps(SCENARIOS[scenarioIdx]?.key, actionsRef.current).length,
   };
 }

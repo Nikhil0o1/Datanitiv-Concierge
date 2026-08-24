@@ -21,7 +21,7 @@ function buildHistory(messages) {
     .filter((m) => m.content);
 }
 
-export function useAgentChat({ actionsRef, stateRef, setState, pushRef }) {
+export function useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanActive }) {
   const [busy, setBusy] = useState(false);
   const audioRef = useRef(null);
 
@@ -83,7 +83,6 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef }) {
           view: st.view,
           filter: st.filter,
           active_tab: st.activeTab,
-          human_mode: st.humanMode,
           history,
           source,
         });
@@ -107,13 +106,15 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef }) {
       setState((s) => ({ ...s, agentStatus: 'Working' }));
 
       const speakPromise = speakReply(reply, actions);
-      const actPromise = applyAgentActions(actions, actionList, setState, stateRef);
+      const actPromise = applyAgentActions(actions, actionList, setState, stateRef, {
+        isHumanActive,
+      });
       await Promise.all([actPromise, speakPromise]);
 
       setBusy(false);
       setState((s) => ({ ...s, agentStatus: 'Standing by' }));
     },
-    [actionsRef, busy, pushRef, setState, speakReply, stateRef],
+    [actionsRef, busy, isHumanActive, pushRef, setState, speakReply, stateRef],
   );
 
   return { busy, sendMessage, audioRef };

@@ -8,7 +8,9 @@ import { useVoice } from '../hooks/useVoice';
 import { useAgentWebSocket } from '../hooks/useAgentWebSocket';
 import AgentCursor from './AgentCursor';
 import AgentAvatar from './AgentAvatar';
-import PlanTabs, { TAB_LABELS } from './plan/PlanTabs';
+import PlanTabs, { TAB_LABELS, tabsForPlan } from './plan/PlanTabs';
+import PortfolioLanding from './PortfolioLanding';
+import { computeXutil, defaultOtWeekly, fwdCount } from '../utils/planLogic';
 
 const SHOW_SCENARIO_REPLAY = false;
 
@@ -31,31 +33,6 @@ function buildEditorWeeks(plan) {
   return rows;
 }
 
-function TriageRow({ item, tag, tcls, focused, humanMode, onOpen }) {
-  return (
-    <div
-      className={`row ${focused ? 'focus' : ''}`}
-      data-cap={item.cap_id}
-      data-prog={item.program}
-      onClick={() => humanMode && onOpen?.(item.cap_id)}
-    >
-      <div>
-        <div className="nm">
-          {item.plan_name}
-          {item.has_roster_gap ? <span className="flag">roster</span> : null}
-        </div>
-        <div className="sub">
-          {item.cap_id} · {item.program} › {item.lob} › {item.site.replace(/-$/, '')} · {item.why}
-        </div>
-      </div>
-      <div className={`v ${item.sustained < 0 ? 'neg' : 'pos'}`}>{f2(item.sustained)}</div>
-      <div>
-        <span className={`act ${tcls}`}>{tag}</span>
-      </div>
-    </div>
-  );
-}
-
 export default function PlanningApp({ logoSrc }) {
   const workspaceRef = useRef(null);
   const domHandlersRef = useRef({});
@@ -70,6 +47,8 @@ export default function PlanningApp({ logoSrc }) {
   const [wsStepLabel, setWsStepLabel] = useState('Ready');
   const [chatInput, setChatInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [planDecisions, setPlanDecisions] = useState({});
+  const [otWeeksByCap, setOtWeeksByCap] = useState({});
   const paneRef = useRef(null);
   const chatEndRef = useRef(null);
   const stateRef = useRef(null);
@@ -87,7 +66,6 @@ export default function PlanningApp({ logoSrc }) {
     agentStatus: 'Standing by',
     savedMin: 0,
     savedBump: false,
-    humanMode: false,
     focusCap: null,
     snap: false,
     foldVisible: false,
@@ -103,6 +81,7 @@ export default function PlanningApp({ logoSrc }) {
     doneRoster: false,
     doneRec: false,
     execDone: false,
+    execMsg: '',
     ledgerAnimated: false,
     memoriesCited: false,
     packages: [],
@@ -134,6 +113,7 @@ export default function PlanningApp({ logoSrc }) {
     stateRef,
     setState,
     pushRef: engine.pushRef,
+    isHumanActive: engine.isHumanActive,
   });
 
   const matchesSearch = useCallback((item) => {
@@ -274,8 +254,71 @@ export default function PlanningApp({ logoSrc }) {
   }, [setState, refreshPortfolio]);
 
   const handleAcceptRec = useCallback(() => {
-    setState((s) => ({ ...s, doneRec: true }));
+    const capId = stateRef.current.activePlan;
+    setState((s) => ({
+      ...s,
+      doneRec: true,
+      packages: s.packages.map((p) =>
+        p.cap_id === capId && !p.done ? { ...p, ticked: true } : p,
+      ),
+    }));
+    setPlanDecisions((d) => ({
+      ...d,
+      [capId]: { ...(d[capId] || {}), rec: 'acc' },
+    }));
   }, []);
+
+  const handleRejectRec = useCallback(() => {
+    const capId = stateRef.current.activePlan;
+    setState((s) => ({
+      ...s,
+      doneRec: false,
+      packages: s.packages.map((p) => (p.cap_id === capId ? { ...p, ticked: false } : p)),
+    }));
+    setPlanDecisions((d) => ({
+      ...d,
+      [capId]: { ...(d[capId] || {}), rec: 'rej' },
+    }));
+  }, []);
+
+  const handleRecOverride = useCallback((patch) => {
+    const capId = stateRef.current.activePlan;
+    setPlanDecisions((d) => ({
+      ...d,
+      [capId]: {
+        ...(d[capId] || {}),
+        rec: 'mod',
+        recOvr: { ...(d[capId]?.recOvr || {}), ...patch },
+      },
+    }));
+  }, []);
+
+  const handleDecide = useCallback((kind, sub, mode) => {
+    const capId = stateRef.current.activePlan;
+    setPlanDecisions((d) => {
+      const cur = { ...(d[capId] || {}) };
+      if (kind === 'shr') cur.shr = mode;
+      else if (kind === 'fw') cur.fw = { ...(cur.fw || {}), [sub]: mode };
+      else if (kind === 'rec') cur.rec = mode;
+      else if (kind === 'att') cur.att = mode;
+      return { ...d, [capId]: cur };
+    });
+    if (kind === 'shr' && (mode === 'acc' || mode === 'mod')) {
+      setState((s) => ({ ...s, editorReady: true, chartShr: { capId, ready: true } }));
+    }
+  }, [setState]);
+
+  const handleOtWeekChange = useCallback((idx, value) => {
+    const capId = stateRef.current.activePlan;
+    const plan = data.find((p) => p.capId === capId);
+    if (!plan) return;
+    const n = fwdCount(plan);
+    setOtWeeksByCap((prev) => {
+      const base = prev[capId]?.length === n ? [...prev[capId]] : Array(n).fill(defaultOtWeekly(plan));
+      base[idx] = value;
+      return { ...prev, [capId]: base };
+    });
+  }, [data]);
 
   const handleOpenQueue = useCallback(() => {
     setState((s) => ({ ...s, view: 'queue', revealed: { ...s.revealed, pkg: true } }));
@@ -298,39 +341,88 @@ export default function PlanningApp({ logoSrc }) {
   const handleExecuteSelected = useCallback(async () => {
     const ticked = stateRef.current.packages.filter((p) => p.ticked && !p.done);
     const ids = ticked.map((p) => p.id).filter(Boolean);
+    let message = 'No packages selected.';
     if (ids.length) {
       try {
-        await api.executeQueue(ids);
+        const res = await api.executeQueue(ids);
+        message = res?.message || `Posted ${ids.length} package(s) to CAP-ABILITY`;
       } catch (e) {
         console.error(e);
+        message = e.message || 'Execute failed';
       }
     }
     setState((s) => ({
       ...s,
-      execDone: true,
+      execDone: ids.length > 0,
+      execMsg: message,
       packages: s.packages.map((p) =>
         p.ticked ? { ...p, done: true, status: 'posted', ticked: false } : p,
       ),
     }));
     refreshPortfolio();
+    return { message };
+  }, [setState, refreshPortfolio]);
+
+  const handleExecutePlan = useCallback(async () => {
+    const capId = stateRef.current.activePlan;
+    if (!stateRef.current.doneRec) {
+      return { message: 'No approved package yet — accept a recommendation first.' };
+    }
+    const match = stateRef.current.packages.find((p) => p.cap_id === capId && !p.done);
+    if (!match?.id) {
+      setState((s) => ({
+        ...s,
+        execDone: true,
+        execMsg: `Local execute for ${capId} — no queued package id; marked complete in UI.`,
+      }));
+      return { message: `Local execute for ${capId}` };
+    }
+    let message = '';
+    try {
+      const res = await api.executeQueue([match.id]);
+      message = res?.message || `Posted 1 package to CAP-ABILITY`;
+    } catch (e) {
+      console.error(e);
+      message = e.message || 'Execute failed';
+    }
+    setState((s) => ({
+      ...s,
+      execDone: true,
+      execMsg: message,
+      packages: s.packages.map((p) =>
+        p.cap_id === capId ? { ...p, done: true, status: 'posted', ticked: false } : p,
+      ),
+    }));
+    refreshPortfolio();
+    return { message };
   }, [setState, refreshPortfolio]);
 
   domHandlersRef.current = {
     setFilter: (prog) => setState((s) => ({ ...s, filter: prog, view: 'port', focusCap: null })),
     openPlan: (capId) => {
       const p = data.find((r) => r.capId === capId);
+      const tabs = tabsForPlan(p);
       setState((s) => ({
         ...s,
         view: 'plan',
         activePlan: capId,
         focusCap: capId,
         activeTab: 'ov',
-        shownTabs: ['ov'],
+        shownTabs: tabs,
         editorWeeks: p ? buildEditorWeeks(p) : s.editorWeeks,
-        editorReady: false,
-        chartOU: null,
-        chartShr: null,
+        editorReady: true,
+        chartOU: { capId, ready: true, mark: 8, lbl: '' },
+        chartShr: { capId, ready: true },
+        doneRec: false,
+        doneShr: false,
+        doneRoster: false,
       }));
+      if (p) {
+        setOtWeeksByCap((prev) => ({
+          ...prev,
+          [capId]: prev[capId]?.length === fwdCount(p) ? prev[capId] : Array(fwdCount(p)).fill(defaultOtWeekly(p)),
+        }));
+      }
     },
     openTab: (tab) => {
       setState((s) => ({
@@ -338,7 +430,7 @@ export default function PlanningApp({ logoSrc }) {
         view: 'plan',
         activeTab: tab,
         shownTabs: s.shownTabs.includes(tab) ? s.shownTabs : [...s.shownTabs, tab],
-        editorReady: tab === 'shr' ? true : s.editorReady,
+        editorReady: tab === 'shr' || tab === 'ov' ? true : s.editorReady,
       }));
     },
     view: (v) => {
@@ -351,9 +443,11 @@ export default function PlanningApp({ logoSrc }) {
     mapRoster: handleMapRoster,
     submitShrinkage: handleSubmitShrinkage,
     acceptRec: handleAcceptRec,
+    rejectRec: handleRejectRec,
     selectAllPackages: handleSelectAllPackages,
     clearPackages: handleClearPackages,
     executeSelected: handleExecuteSelected,
+    executePlan: handleExecutePlan,
     togglePackage: (capId) => {
       setState((s) => ({
         ...s,
@@ -365,7 +459,7 @@ export default function PlanningApp({ logoSrc }) {
   };
 
   const togglePackage = (capId) => {
-    if (!state.humanMode) return;
+    engine.markHumanActive();
     setState((s) => ({
       ...s,
       packages: s.packages.map((p) => (p.cap_id === capId ? { ...p, ticked: !p.ticked } : p)),
@@ -408,9 +502,11 @@ export default function PlanningApp({ logoSrc }) {
   };
 
   const handleTabClick = (k) => {
-    if (state.humanMode || state.shownTabs.includes(k)) {
-      setState((s) => ({ ...s, activeTab: k }));
-    }
+    setState((s) => ({
+      ...s,
+      activeTab: k,
+      shownTabs: s.shownTabs.includes(k) ? s.shownTabs : [...s.shownTabs, k],
+    }));
   };
 
   if (loading) {
@@ -443,7 +539,13 @@ export default function PlanningApp({ logoSrc }) {
             </div>
             ) : null}
 
-            <div className={`ws ${state.humanMode ? 'human' : ''}`} id="ws" ref={workspaceRef}>
+            <div
+              className="ws human"
+              id="ws"
+              ref={workspaceRef}
+              onPointerDownCapture={() => engine.markHumanActive()}
+              onKeyDownCapture={() => engine.markHumanActive()}
+            >
               <AgentCursor cursor={engine.cursor} />
               <div id="wsIn">
                 <div className="wtop">
@@ -459,7 +561,10 @@ export default function PlanningApp({ logoSrc }) {
                         key={v}
                         className={state.view === v ? 'on' : ''}
                         data-view={v}
-                        onClick={() => state.humanMode && domHandlersRef.current.view?.(v)}
+                        onClick={() => {
+                          engine.markHumanActive();
+                          domHandlersRef.current.view?.(v);
+                        }}
                       >
                         {label}
                       </span>
@@ -473,7 +578,10 @@ export default function PlanningApp({ logoSrc }) {
                   <span
                     className={`sel ${state.filter === 'all' ? 'on' : ''}`}
                     data-filter="all"
-                    onClick={() => state.humanMode && setState((s) => ({ ...s, filter: 'all' }))}
+                    onClick={() => {
+                      engine.markHumanActive();
+                      setState((s) => ({ ...s, filter: 'all' }));
+                    }}
                   >
                     All programs
                   </span>
@@ -482,7 +590,10 @@ export default function PlanningApp({ logoSrc }) {
                       key={g.name}
                       className={`sel ${state.filter === g.name ? 'on' : ''}`}
                       data-filter={g.name}
-                      onClick={() => state.humanMode && setState((s) => ({ ...s, filter: g.name }))}
+                      onClick={() => {
+                        engine.markHumanActive();
+                        setState((s) => ({ ...s, filter: g.name }));
+                      }}
                     >
                       {g.name}
                     </span>
@@ -492,7 +603,10 @@ export default function PlanningApp({ logoSrc }) {
                     className="srch"
                     placeholder="Search plan / planner / site"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      engine.markHumanActive();
+                      setSearchQuery(e.target.value);
+                    }}
                     aria-label="Search plans"
                   />
                   <span className="showing" id="showing">Showing {showing} of {data.length}</span>
@@ -500,68 +614,40 @@ export default function PlanningApp({ logoSrc }) {
 
                 {state.view === 'port' && (
                   <div className="pane on" data-view="port" ref={paneRef}>
-                    <div className="trihead"><b>Needs your decision</b><span id="c1">{filteredDec.length}</span></div>
-                    <div id="decList">
-                      {programs.map((g) => {
-                        const rows = filteredDec.filter((o) => o.program === g.name);
-                        if (!rows.length) return null;
-                        return (
-                          <div key={g.name} className="grp in" data-prog={g.name}>
-                            <b>{g.name}</b><span>{g.plan_count} plans</span>
-                            <span className={`nou ${g.net_ou > 0 ? 'pos-t' : 'neg-t'}`}>net O/U {g.net_ou > 0 ? '+' : ''}{f2(g.net_ou)}</span>
-                          </div>
-                        );
-                      })}
-                      {filteredDec.map((o) => (
-                        <TriageRow
-                          key={o.cap_id}
-                          item={o}
-                          tag="decide"
-                          tcls="dec"
-                          focused={state.focusCap === o.cap_id}
-                          humanMode={state.humanMode}
-                          onOpen={(capId) => domHandlersRef.current.openPlan?.(capId)}
-                        />
-                      ))}
-                    </div>
-                    <div className="trihead"><b>Agent can handle these</b><span id="c2">{filteredAuto.length}</span></div>
-                    <div id="autoList">
-                      {filteredAuto.map((o) => (
-                        <TriageRow
-                          key={o.cap_id}
-                          item={o}
-                          tag="autopilot"
-                          tcls="auto"
-                          focused={state.focusCap === o.cap_id}
-                          humanMode={state.humanMode}
-                          onOpen={(capId) => domHandlersRef.current.openPlan?.(capId)}
-                        />
-                      ))}
-                      {!filteredDec.length && !filteredAuto.length ? (
-                        <div className="fold in" style={{ opacity: 1, transform: 'none' }}>
-                          <b>No plans match</b> — try clearing search or changing the program filter
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className={`fold ${filteredQuiet.length ? 'in' : ''}`} id="fold1">
-                      <b>{filteredQuiet.length} plans need nothing</b> — inside tolerance, no assumption moved
-                      <span className="n">folded</span>
-                    </div>
+                    <PortfolioLanding
+                      plans={data}
+                      programs={programs}
+                      filter={state.filter}
+                      search={searchQuery}
+                      triageCounts={{
+                        dec: filteredDec.length,
+                        auto: filteredAuto.length,
+                        quiet: filteredQuiet.length,
+                      }}
+                      gotBy={computeXutil(data).gotBy}
+                      onOpenPlan={(capId) => {
+                        engine.markHumanActive();
+                        domHandlersRef.current.openPlan?.(capId);
+                      }}
+                    />
                   </div>
                 )}
 
                 {state.view === 'plan' && activePlan && (
                   <div className="pane on" data-view="plan" ref={paneRef}>
                     <div className="tabs">
-                      <span className="lb">7 steps</span>
-                      {Object.entries(TAB_LABELS).map(([k, label]) => (
+                      <span className="lb">{tabsForPlan(activePlan).length} steps</span>
+                      {tabsForPlan(activePlan).map((k) => (
                         <span
                           key={k}
                           className={`tab ${state.shownTabs.includes(k) ? 'shown' : ''} ${state.activeTab === k ? 'on' : ''}`}
                           data-tab={k}
-                          onClick={() => handleTabClick(k)}
+                          onClick={() => {
+                            engine.markHumanActive();
+                            handleTabClick(k);
+                          }}
                         >
-                          {label}
+                          {TAB_LABELS[k]}
                         </span>
                       ))}
                       <span className="peek" id="peekTxt">{state.shownTabs.length ? 'all tabs open' : 'peeking — agent skipped this'}</span>
@@ -571,12 +657,19 @@ export default function PlanningApp({ logoSrc }) {
                         activeTab={state.activeTab}
                         plan={activePlan}
                         state={state}
-                        humanMode={state.humanMode}
+                        allPlans={data}
+                        decisions={planDecisions[activePlan.capId] || {}}
+                        otWeeks={otWeeksByCap[activePlan.capId] || []}
                         onEditorChange={setEditorWeek}
                         onSubmitShrinkage={handleSubmitShrinkage}
                         onMapRoster={handleMapRoster}
                         onAcceptRec={handleAcceptRec}
+                        onRejectRec={handleRejectRec}
                         onOpenQueue={handleOpenQueue}
+                        onDecide={handleDecide}
+                        onOtWeekChange={handleOtWeekChange}
+                        onExecutePlan={handleExecutePlan}
+                        onRecOverride={handleRecOverride}
                       />
                     </div>
                   </div>
@@ -604,8 +697,8 @@ export default function PlanningApp({ logoSrc }) {
                     <div className="trihead"><b>Approved plan packages</b><span>tick the ones to execute</span></div>
                     <div className="selbar">
                       <b id="selCount">{ticked.length} of {state.packages.length}</b> selected to execute ·
-                      <span className="mini" data-act="sel-all" onClick={() => state.humanMode && handleSelectAllPackages()}>Select all</span>
-                      <span className="mini" data-act="sel-none" onClick={() => state.humanMode && handleClearPackages()}>Clear</span>
+                      <span className="mini" data-act="sel-all" onClick={() => handleSelectAllPackages()}>Select all</span>
+                      <span className="mini" data-act="sel-none" onClick={() => handleClearPackages()}>Clear</span>
                     </div>
                     <div id="pkgList">
                       {state.packages.map((p) => (
@@ -625,7 +718,7 @@ export default function PlanningApp({ logoSrc }) {
                       ))}
                     </div>
                     <div className="acts" style={{ marginTop: 12 }}>
-                      <div className="btn p" data-act="exec" onClick={() => state.humanMode && handleExecuteSelected()}>
+                      <div className="btn p" data-act="exec" onClick={() => handleExecuteSelected()}>
                         Execute selected →
                       </div>
                     </div>

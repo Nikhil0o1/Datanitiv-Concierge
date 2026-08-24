@@ -11,6 +11,10 @@ export function fireAgentTarget(el, handlers) {
     else if (act === 'sel-all') handlers.selectAllPackages?.();
     else if (act === 'sel-none') handlers.clearPackages?.();
     else if (act === 'exec') handlers.executeSelected?.();
+    else if (act === 'open-detail') {
+      const capId = el.closest?.('[data-cap]')?.getAttribute('data-cap') || el.getAttribute('data-cap');
+      if (capId) handlers.openPlan?.(capId);
+    }
     return true;
   }
 
@@ -33,8 +37,13 @@ export function fireAgentTarget(el, handlers) {
   }
 
   const cap = el.getAttribute('data-cap');
-  if (cap && el.classList.contains('row')) {
+  if (cap && (el.classList.contains('row') || el.classList.contains('land-row'))) {
     handlers.openPlan?.(cap);
+    return true;
+  }
+  const land = el.closest?.('.land-row');
+  if (land?.getAttribute('data-cap') && (el.classList.contains('open-mini') || el.classList.contains('land-row-main'))) {
+    handlers.openPlan?.(land.getAttribute('data-cap'));
     return true;
   }
 
@@ -58,7 +67,9 @@ export function directFromSelector(selector, handlers) {
 
   const capMatch = selector.match(/data-cap="([^"]+)"/);
   if (capMatch) {
-    if (selector.includes('.row')) return handlers.openPlan?.(capMatch[1]);
+    if (selector.includes('.row') || selector.includes('.land-row') || selector.includes('open-mini')) {
+      return handlers.openPlan?.(capMatch[1]);
+    }
     if (selector.includes('.pkg')) return handlers.togglePackage?.(capMatch[1]);
   }
 

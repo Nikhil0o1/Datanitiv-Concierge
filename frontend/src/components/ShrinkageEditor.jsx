@@ -1,6 +1,6 @@
 import { f2, reqOf } from '../utils/format';
 
-export default function ShrinkageEditor({ weeks, billable, onChange, editSrc, netReq, humanMode, onSubmit, doneShr }) {
+export default function ShrinkageEditor({ weeks, billable, onChange, editSrc, netReq, onSubmit, doneShr }) {
   if (!weeks?.length) return null;
 
   const net = weeks.reduce((d, w) => d + reqOf(billable, w.cur) - reqOf(billable, w.base), 0);
@@ -37,7 +37,6 @@ export default function ShrinkageEditor({ weeks, billable, onChange, editSrc, ne
                 max="70"
                 step="0.5"
                 value={w.cur}
-                disabled={!humanMode}
                 onChange={(e) => onChange(k, parseFloat(e.target.value), true)}
               />
               <input
@@ -46,7 +45,6 @@ export default function ShrinkageEditor({ weeks, billable, onChange, editSrc, ne
                 max="70"
                 step="0.1"
                 value={w.cur.toFixed(1)}
-                disabled={!humanMode}
                 onChange={(e) => onChange(k, parseFloat(e.target.value), true)}
               />
               <span className="rq" id={`rq${k}`}>
@@ -60,10 +58,10 @@ export default function ShrinkageEditor({ weeks, billable, onChange, editSrc, ne
         })}
       </div>
       <div className="acts">
-        <div className="btn p" data-act="go-shrink" onClick={humanMode ? onSubmit : undefined}>
+        <div className="btn p" data-act="go-shrink" onClick={onSubmit}>
           Submit to plan
         </div>
-        {humanMode ? <div className="btn g">Reset</div> : null}
+        <div className="btn g">Reset</div>
       </div>
       <div className={`done ${doneShr ? 'on' : ''}`} id="doneShr">
         <span>✓</span>

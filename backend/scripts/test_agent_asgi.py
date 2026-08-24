@@ -12,7 +12,7 @@ async def main():
         payload = {
             "message": "Hello",
             "context_cap_id": "CAP00010",
-            "ui_state": {"view": "port", "filter": "all", "active_tab": "ov", "human_mode": False},
+            "ui_state": {"view": "port", "filter": "all", "active_tab": "ov"},
         }
         r = await client.post("/api/agent/chat", json=payload)
         print("status:", r.status_code)

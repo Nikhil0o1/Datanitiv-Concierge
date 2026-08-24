@@ -53,7 +53,6 @@ export const api = {
           view: uiState?.view,
           filter: uiState?.filter,
           active_tab: uiState?.active_tab,
-          human_mode: uiState?.human_mode,
         },
         history: uiState?.history || [],
         source: uiState?.source || 'text',

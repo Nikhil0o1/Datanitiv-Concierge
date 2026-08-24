@@ -84,10 +84,21 @@ def _scope(row: dict) -> dict:
 
 
 def _parse_cls_date(label: str, year: int = 2026) -> date | None:
-    if not label or "/" not in label:
+    if not label or "/" not in str(label):
         return None
-    month, day = map(int, label.split("/"))
-    return date(year, month, day)
+    parts = [p for p in str(label).strip().split("/") if p]
+    try:
+        if len(parts) == 2:
+            month, day = map(int, parts)
+            return date(year, month, day)
+        if len(parts) == 3:
+            month, day, raw_year = map(int, parts)
+            if raw_year < 100:
+                raw_year += 2000
+            return date(raw_year, month, day)
+    except ValueError:
+        return None
+    return None
 
 
 def _roster_id(cp_plan_id: int) -> int:
@@ -192,7 +203,7 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
                         date=week_date,
                         kpi_key=kpi_key,
                         value=value,
-                        last_updated_on_utc=NOW,
+                        last_updated_on_utc=NOW.replace(tzinfo=None),
                         **scope,
                     )
                 )
@@ -427,6 +438,7 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
         session_context={"source": "prototype", "cycle": "Week of Aug 02, 2026"},
     )
     session.add(chat_session)
+    await session.flush()
     session.add(
         CapeChatMessage(
             session_id=chat_session.id,
@@ -606,7 +618,7 @@ async def _seed_pgboss(session: AsyncSession) -> None:
         text(
             """
             INSERT INTO pgboss.schedule (name, cron, timezone, data, created_on, updated_on)
-            VALUES ('reminder-deliver', '30 2 * * *', 'UTC', :data::jsonb, :now, :now)
+            VALUES ('reminder-deliver', '30 2 * * *', 'UTC', CAST(:data AS jsonb), :now, :now)
             ON CONFLICT (name) DO NOTHING
             """
         ),
@@ -630,13 +642,13 @@ async def _seed_pgboss(session: AsyncSession) -> None:
                 retry_backoff, start_after, expire_in, created_on, keep_until, policy
             )
             VALUES (
-                :id::uuid, 'reminder-deliver', 0, :data::jsonb, 'created', 3, 0, 60,
-                false, :now, '00:15:00', :now, :now + interval '14 days', 'standard'
+                CAST(:id AS uuid), 'reminder-deliver', 0, CAST(:data AS jsonb), 'created', 3, 0, 60,
+                false, :now, '00:15:00', :now, :keep_until, 'standard'
             )
             ON CONFLICT DO NOTHING
             """
         ),
-        {"id": job_id, "data": json.dumps({"reminderId": reminder_id, "demo": True}), "now": NOW},
+        {"id": job_id, "data": json.dumps({"reminderId": reminder_id, "demo": True}), "now": NOW, "keep_until": NOW + timedelta(days=14)},
     )
     await session.execute(
         text(
@@ -646,11 +658,11 @@ async def _seed_pgboss(session: AsyncSession) -> None:
                 retry_backoff, start_after, expire_in, created_on, completed_on, keep_until, policy, archived_on
             )
             VALUES (
-                :id::uuid, 'reminder-deliver', 0, :data::jsonb, 'completed', 3, 0, 60,
-                false, :now, '00:15:00', :now, :now, :now + interval '14 days', 'standard', :now
+                CAST(:id AS uuid), 'reminder-deliver', 0, CAST(:data AS jsonb), 'completed', 3, 0, 60,
+                false, :now, '00:15:00', :now, :now, :keep_until, 'standard', :now
             )
             ON CONFLICT DO NOTHING
             """
         ),
-        {"id": archived_id, "data": json.dumps({"reminderId": reminder_id, "demo": True}), "now": NOW},
+        {"id": archived_id, "data": json.dumps({"reminderId": reminder_id, "demo": True}), "now": NOW, "keep_until": NOW + timedelta(days=14)},
     )

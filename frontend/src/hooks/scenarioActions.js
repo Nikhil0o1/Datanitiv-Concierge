@@ -1,6 +1,6 @@
 import { api } from '../api/client';
 import { directFromSelector, fireAgentTarget } from '../lib/agentTarget';
-import { hm, reqOf } from '../utils/format';
+import { hm } from '../utils/format';
 
 export const HUE = { u: '#1C1B18', a: '#F5B01A', d: '#C4463C', s: '#3B6FB5' };
 
@@ -39,7 +39,9 @@ export function createScenarioActions({
     say,
     hear,
     push,
-    showCursor: () => cursor?.show?.(),
+    showCursor: () => {
+      if (useCursor()) cursor?.show?.();
+    },
     hideCursor: () => cursor?.hide?.(),
     addTime: async (min, why) => {
       setState((s) => ({ ...s, savedMin: s.savedMin + min, savedBump: true }));
@@ -58,12 +60,12 @@ export function createScenarioActions({
     setFilter: async (prog) => {
       const sel =
         prog === 'all' ? '[data-filter="all"]' : `[data-filter="${String(prog).replace(/"/g, '\\"')}"]`;
-      cursor?.show?.();
+      if (useCursor()) cursor?.show?.();
       await tap(sel, `filtered · program = ${prog}`);
     },
     view: async (v) => {
       if (v === 'queue') {
-        cursor?.show?.();
+        if (useCursor()) cursor?.show?.();
         await tap('[data-view="queue"]', 'opened action queue');
       } else {
         domHandlersRef?.current?.view?.(v);
@@ -71,15 +73,19 @@ export function createScenarioActions({
       }
     },
     openPlan: async (capId) => {
-      cursor?.show?.();
-      await tap(`.row[data-cap="${capId}"]`, `opened ${capId}`);
+      if (useCursor()) cursor?.show?.();
+      // Prefer new landing rows; fall back to legacy .row
+      const sel = `.land-row[data-cap="${capId}"] .open-mini, .land-row[data-cap="${capId}"], .row[data-cap="${capId}"]`;
+      await tap(sel, `opened ${capId}`);
+      // Ensure open even if DOM tap missed (landing expand vs open)
+      domHandlersRef?.current?.openPlan?.(capId);
     },
     markTabs: async (tabs) => {
       setState((s) => ({ ...s, shownTabs: tabs, activeTab: tabs[0] || 'ov' }));
       await wait(350);
     },
     openTab: async (tab) => {
-      cursor?.show?.();
+      if (useCursor()) cursor?.show?.();
       await tap(`[data-tab="${tab}"]`, `opened tab · ${tab}`);
     },
     drawOUChart: async (capId, opt) => {
@@ -101,11 +107,21 @@ export function createScenarioActions({
           if (ew[k]) ew[k] = { ...ew[k], cur: v };
           return { ...s, editorWeeks: ew, editSrc: 'agent' };
         });
-        await wait(230);
+        await wait(useCursor() ? 230 : 40);
       }
     },
     mapRoster: async (capId) => {
       const id = capId || stateRef.current.activePlan;
+      if (!useCursor()) {
+        try {
+          await api.mapRoster(id, {});
+        } catch {
+          /* ignore */
+        }
+        domHandlersRef?.current?.mapRoster?.(id);
+        await push('a', 'Agent · background', `mapped roster · ${id}`);
+        return;
+      }
       domHandlersRef?.current?.openTab?.('nh');
       await wait(300);
       cursor?.show?.();
@@ -118,6 +134,20 @@ export function createScenarioActions({
     },
     submitShrinkage: async (capId) => {
       const id = capId || stateRef.current.activePlan;
+      if (!useCursor()) {
+        try {
+          const editorWeeks = stateRef.current.editorWeeks;
+          await api.submitShrinkage(
+            id,
+            editorWeeks.map((w) => ({ week_idx: w.weekIdx, shrink_plan: w.cur })),
+          );
+        } catch {
+          /* ignore */
+        }
+        domHandlersRef?.current?.submitShrinkage?.(id);
+        await push('a', 'Agent · background', `submitted shrinkage · ${id}`);
+        return;
+      }
       domHandlersRef?.current?.openTab?.('shr');
       await wait(300);
       cursor?.show?.();
@@ -132,28 +162,24 @@ export function createScenarioActions({
         /* local net shown */
       }
     },
-    human: async (on) => {
-      setState((s) => ({ ...s, humanMode: on, agentStatus: on ? 'You have control' : 'Standing by' }));
-      if (on) cursor?.hide?.();
-      else cursor?.show?.();
-      await wait(300);
-    },
     tickPackage: async (capId) => {
-      cursor?.show?.();
+      if (useCursor()) cursor?.show?.();
       await tap(`.pkg[data-cap="${capId}"]`, `ticked ${capId}`);
     },
     selectAllPackages: async () => {
-      cursor?.show?.();
+      if (useCursor()) cursor?.show?.();
       await tap('[data-act="sel-all"]', 'all packages selected');
     },
     executeSelected: async () => {
-      cursor?.show?.();
+      if (useCursor()) cursor?.show?.();
       await tap('[data-act="exec"]', 'executed · packages posted to CAP-ABILITY');
     },
     fillLedger: async () => {
-      domHandlersRef?.current?.view?.('time');
+      if (useCursor()) {
+        domHandlersRef?.current?.view?.('time');
+      }
       setState((s) => ({ ...s, ledgerAnimated: true }));
-      await wait(2000);
+      await wait(useCursor() ? 2000 : 200);
     },
     citeMemories: async () => {
       setState((s) => ({ ...s, memoriesCited: true }));
@@ -162,15 +188,31 @@ export function createScenarioActions({
   };
 }
 
-/** Apply structured intents from Claude — agent drives the live UI with cursor. */
-export async function applyAgentActions(actions, actionList, setState, stateRef) {
+/**
+ * Apply structured intents from Claude.
+ * Planner always keeps the mouse. If they are actively clicking/editing, the
+ * agent hides its cursor and applies actions silently in the background.
+ */
+export async function applyAgentActions(actions, actionList, setState, stateRef, { isHumanActive } = {}) {
   if (!actionList?.length) return;
-  setState((s) => ({ ...s, humanMode: false, agentStatus: 'Working' }));
-  actions.showCursor?.();
+
+  const humanBusy = typeof isHumanActive === 'function' ? isHumanActive() : false;
+
+  setState((s) => ({
+    ...s,
+    agentStatus: humanBusy ? 'Working in background' : 'Working',
+  }));
+
+  if (humanBusy) {
+    actions.hideCursor?.();
+  } else {
+    actions.showCursor?.();
+  }
 
   for (const act of actionList || []) {
     const type = act.type;
     const p = act.params || {};
+
     switch (type) {
       case 'set_filter':
         await actions.setFilter(p.program || 'all');
@@ -181,11 +223,17 @@ export async function applyAgentActions(actions, actionList, setState, stateRef)
       case 'set_shrinkage_weeks':
         if (p.weeks) {
           const capId = p.cap_id || stateRef?.current?.activePlan;
-          if (p.cap_id) await actions.openPlan(p.cap_id);
-          await actions.openTab('shr');
-          await actions.buildEditor(capId);
-          await actions.voiceSet(p.weeks);
-          if (p.submit) await actions.submitShrinkage(capId);
+          if (humanBusy) {
+            await actions.buildEditor(capId);
+            await actions.voiceSet(p.weeks);
+            if (p.submit) await actions.submitShrinkage(capId);
+          } else {
+            if (p.cap_id) await actions.openPlan(p.cap_id);
+            await actions.openTab('shr');
+            await actions.buildEditor(capId);
+            await actions.voiceSet(p.weeks);
+            if (p.submit) await actions.submitShrinkage(capId);
+          }
         }
         break;
       case 'map_roster':
@@ -200,7 +248,6 @@ export async function applyAgentActions(actions, actionList, setState, stateRef)
         if (p.tab) await actions.openTab(p.tab);
         break;
       case 'human_mode':
-        await actions.human(!!p.on);
         break;
       case 'mark_tabs':
         if (p.tabs?.length) await actions.markTabs(p.tabs);

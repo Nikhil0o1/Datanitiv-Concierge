@@ -2,13 +2,13 @@ import { useCallback, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAgentChat } from './useAgentChat';
 
-export function useVoice({ actionsRef, stateRef, setState, pushRef }) {
+export function useVoice({ actionsRef, stateRef, setState, pushRef, isHumanActive }) {
   const [recording, setRecording] = useState(false);
   const mediaRef = useRef(null);
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
 
-  const chat = useAgentChat({ actionsRef, stateRef, setState, pushRef });
+  const chat = useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanActive });
 
   const startRecording = useCallback(async () => {
     if (recording || chat.busy) return;
