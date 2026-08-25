@@ -1,4 +1,101 @@
-import { f2 } from './format';
+import { f2, reqOf } from './format';
+
+/** Overlay in-progress shrinkage editor weeks onto a plan so every tab sees live FTE/O/U. */
+export function applyLiveShrinkage(plan, editorWeeks) {
+  if (!plan || !editorWeeks?.length) return plan;
+  const sShrinkPlan = [...(plan.sShrinkPlan || [])];
+  const sReq = [...(plan.sReq || [])];
+  const sOU = [...(plan.sOU || [])];
+  const sProj = plan.sProj || [];
+  const billable = Number(plan.billable) || 50;
+  editorWeeks.forEach((w) => {
+    if (w.weekIdx == null || !Number.isFinite(Number(w.cur))) return;
+    const shrink = Number(w.cur);
+    sShrinkPlan[w.weekIdx] = shrink;
+    const req = reqOf(billable, shrink);
+    sReq[w.weekIdx] = req;
+    sOU[w.weekIdx] = Number(sProj[w.weekIdx] ?? w.proj ?? 0) - req;
+  });
+  const cur = plan.curIdx || 0;
+  const fwdS = sShrinkPlan.slice(cur, cur + 12).filter((v) => v != null);
+  const shrink12 = fwdS.length ? fwdS.reduce((a, b) => a + b, 0) / fwdS.length : plan.shrink12;
+  const fwdOU = sOU.slice(cur, cur + 12).filter((v) => v != null && !Number.isNaN(v));
+  const sustained = fwdOU.length
+    ? Math.round((fwdOU.reduce((a, b) => a + b, 0) / fwdOU.length) * 100) / 100
+    : plan.sustained;
+  const minOUfwd = fwdOU.length ? Math.round(Math.min(...fwdOU) * 100) / 100 : plan.minOUfwd;
+  const ou = sOU[cur] ?? plan.ou;
+  return {
+    ...plan,
+    sShrinkPlan,
+    sReq,
+    sOU,
+    shrink12,
+    sustained,
+    minOUfwd,
+    ou,
+    ouShrink: ou,
+  };
+}
+
+/** Overlay in-progress attrition plan weeks onto projected FTE / O/U for every tab. */
+export function applyLiveAttrition(plan, attrWeeks) {
+  if (!plan || !attrWeeks?.length) return plan;
+  const sAttrPlan = [...(plan.sAttrPlan || [])];
+  const origProj = plan.sProj || [];
+  const sReq = plan.sReq || [];
+  const sProj = [...origProj];
+  const sOU = [...(plan.sOU || [])];
+  const cur = plan.curIdx || 0;
+  const extraAt = {};
+  attrWeeks.forEach((w) => {
+    if (w.weekIdx == null || !Number.isFinite(Number(w.cur))) return;
+    const next = Number(w.cur);
+    sAttrPlan[w.weekIdx] = next;
+    const base = Number(w.base) || 0;
+    const stock = Number(w.stock ?? w.proj ?? origProj[w.weekIdx] ?? 0);
+    extraAt[w.weekIdx] = (stock * (next - base)) / 100;
+  });
+  const n = Math.max(sProj.length, sAttrPlan.length, origProj.length);
+  let cum = 0;
+  for (let i = cur; i < n; i++) {
+    cum += Number(extraAt[i]) || 0;
+    const proj = Math.round(((Number(origProj[i]) || 0) - cum) * 100) / 100;
+    sProj[i] = proj;
+    sOU[i] = Math.round((proj - (Number(sReq[i]) || 0)) * 100) / 100;
+  }
+  const fwdA = sAttrPlan.slice(cur, cur + 12).filter((v) => v != null);
+  const attr12 = fwdA.length ? fwdA.reduce((a, b) => a + b, 0) / fwdA.length : plan.attr12;
+  const fwdOU = sOU.slice(cur, cur + 12).filter((v) => v != null && !Number.isNaN(v));
+  const sustained = fwdOU.length
+    ? Math.round((fwdOU.reduce((a, b) => a + b, 0) / fwdOU.length) * 100) / 100
+    : plan.sustained;
+  const minOUfwd = fwdOU.length ? Math.round(Math.min(...fwdOU) * 100) / 100 : plan.minOUfwd;
+  const ou = sOU[cur] ?? plan.ou;
+  return {
+    ...plan,
+    sAttrPlan,
+    sProj,
+    sOU,
+    attr12,
+    sustained,
+    minOUfwd,
+    ou,
+    ouShrink: ou,
+  };
+}
+
+export function computeClosing(hc = {}) {
+  const opening = Number(hc.opening) || 0;
+  const nest = Number(hc.nest) || 0;
+  const tin = Number(hc.tin) || 0;
+  const tout = Number(hc.tout) || 0;
+  const loaOut = Number(hc.loaOut) || 0;
+  const loaIn = Number(hc.loaIn) || 0;
+  const attr = Number(hc.attr) || 0;
+  const promo = Number(hc.promo) || 0;
+  return Math.round((opening + nest + tin - tout + loaOut - loaIn - attr - promo) * 100) / 100;
+}
 
 export function statusOf(plan) {
   const s = plan.sustained;
@@ -155,12 +252,55 @@ export function nfAlert(msg) {
   window.alert(`${msg}\n\nSimulated in Concierge — wired like the HTML prototype.`);
 }
 
-/** Derive demo segment series from total shrinkage (planned vs unplanned + categories). */
+/** Actuals through this week, planned values from this week forward. */
+export function mixActualPlan(actual = [], planned = [], curIdx = 0) {
+  const n = Math.max(actual.length, planned.length);
+  return Array.from({ length: n }, (_, i) => {
+    if (i < curIdx) return actual[i] ?? planned[i] ?? 0;
+    return planned[i] ?? actual[i] ?? 0;
+  });
+}
+
+/** 16-week window: 8 back from this week + this week + 7 forward. */
+export function windowSeries(weeks = [], series = [], curIdx = 0, { back = 8, ahead = 8 } = {}) {
+  const start = Math.max(0, curIdx - back);
+  const end = Math.min(series.length, start + back + ahead);
+  return {
+    values: series.slice(start, end),
+    weeks: weeks.slice(start, end),
+    mark: curIdx - start,
+  };
+}
+
+export function ouColor(v, i, curIdx) {
+  const future = i > curIdx;
+  if (v < 0) return future ? '#f3b0ab' : '#e0483f';
+  return future ? '#a9dcc6' : '#1a9e6a';
+}
+
+/** Shared 16-wk KPI sparkline payloads from a live plan row. */
+export function kpiTrends(plan) {
+  const weeks = plan.weeks || [];
+  const cur = plan.curIdx || 0;
+  const shrink = mixActualPlan(plan.sShrink, plan.sShrinkPlan, cur);
+  const attr = mixActualPlan(plan.sAttr, plan.sAttrPlan, cur);
+  const hire = (plan.sHire || []).map((v) => v || 0);
+  const ou = (plan.sOU || []).map((v) => v || 0);
+  return {
+    shrink: windowSeries(weeks, shrink, cur),
+    attr: windowSeries(weeks, attr, cur),
+    hire: windowSeries(weeks, hire, cur),
+    ou: windowSeries(weeks, ou, cur),
+  };
+}
+
+/** Split total shrinkage into assumed operational shares. Source stores Total only. */
 export function segmentShrinkage(plan) {
   const actual = plan.sShrink || [];
   const plannedTot = plan.sShrinkPlan || [];
   const n = Math.max(actual.length, plannedTot.length, plan.weeks?.length || 0);
   const totalAt = (i) => {
+    if (i >= (plan.curIdx || 0) && plannedTot[i] != null) return plannedTot[i];
     if (actual[i] != null) return actual[i];
     if (plannedTot[i] != null) return plannedTot[i];
     return plan.shrink12 || 0;
@@ -176,11 +316,8 @@ export function segmentShrinkage(plan) {
   const plannedShare = 0.55;
   const cats = Object.keys(weights);
   const byCat = {};
-  cats.forEach((cat, ci) => {
-    byCat[cat] = Array.from({ length: n }, (_, i) => {
-      const wobble = 1 + 0.07 * Math.sin(i * 0.65 + ci * 1.3);
-      return Math.round(totalAt(i) * weights[cat] * wobble * 100) / 100;
-    });
+  cats.forEach((cat) => {
+    byCat[cat] = Array.from({ length: n }, (_, i) => Math.round(totalAt(i) * weights[cat] * 100) / 100);
   });
   const planned = Array.from({ length: n }, (_, i) => Math.round(totalAt(i) * plannedShare * 100) / 100);
   const unplanned = Array.from({ length: n }, (_, i) => Math.round(totalAt(i) * (1 - plannedShare) * 100) / 100);

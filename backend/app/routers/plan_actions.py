@@ -6,6 +6,7 @@ from app.database import get_db
 from datetime import date, datetime
 
 from app.models import (
+    OneviewAttritionAssumption,
     OneviewHeaderDetails,
     OneviewNewHire,
     OneviewPlannerDataset,
@@ -33,8 +34,14 @@ from app.services.plan_repository import (
     KPI_REQ,
     avg_forward,
     cap_to_cp,
+    compute_closing_fte,
+    live_s_attr,
+    live_s_attr_plan,
+    live_s_hire,
+    load_all_plans,
     load_plan,
     update_plan_meta,
+    week_index_for_date,
 )
 from app.services.shrinkage import req_of
 
@@ -45,7 +52,7 @@ HC_API_TO_REF = {v: k for k, v in HC_REF_MAP.items()}
 
 
 async def _reflow_ou_for_week(session, cp_plan_id, week_date, projected, required, plan, idx):
-    ou_val = float(projected) - float(required)
+    ou_val = round(float(projected) - float(required), 2)
     ou_row = (
         await session.execute(
             select(OneviewPlannerDataset).where(
@@ -59,6 +66,27 @@ async def _reflow_ou_for_week(session, cp_plan_id, week_date, projected, require
         ou_row.value = ou_val
     plan.ou[idx] = ou_val
     return ou_val
+
+
+async def _shift_projected_forward(session, plan, cp_plan_id: int, from_idx: int, delta: float) -> None:
+    if abs(delta) < 0.0001:
+        return
+    for idx, week_date in enumerate(plan.week_dates):
+        if idx < from_idx:
+            continue
+        proj_row = (
+            await session.execute(
+                select(OneviewPlannerDataset).where(
+                    OneviewPlannerDataset.cp_plan_id == cp_plan_id,
+                    OneviewPlannerDataset.date == week_date,
+                    OneviewPlannerDataset.kpi_key == KPI_PROJ,
+                )
+            )
+        ).scalar_one_or_none()
+        if proj_row:
+            proj_row.value = round(float(proj_row.value or 0) + delta, 2)
+            plan.projected[idx] = float(proj_row.value)
+        await _reflow_ou_for_week(session, cp_plan_id, week_date, plan.projected[idx], plan.required[idx], plan, idx)
 
 
 @router.post("/{cap_id}/shrinkage", response_model=ShrinkageSubmitResponse)
@@ -146,8 +174,11 @@ async def submit_shrinkage(
     cur_idx = int(plan.meta.get("curIdx", 0))
     shrink12 = avg_forward(plan.shrink_plan, cur_idx)
     fwd_ou = [float(v) for v in plan.ou[cur_idx : cur_idx + 12] if v is not None]
+    live_ou = float(plan.ou[cur_idx]) if 0 <= cur_idx < len(plan.ou) else plan.meta.get("ou", 0)
     meta_patch = {
         "shrink12": shrink12,
+        "ou": live_ou,
+        "ouShrink": live_ou,
         "sustained": round(sum(fwd_ou) / len(fwd_ou), 2) if fwd_ou else plan.meta.get("sustained", 0),
         "minOUfwd": round(min(fwd_ou), 2) if fwd_ou else plan.meta.get("minOUfwd", 0),
     }
@@ -161,6 +192,24 @@ async def submit_shrinkage(
     )
 
 
+async def _write_projected(session, plan, cp_plan_id, idx, projected):
+    week_date = plan.week_dates[idx]
+    val = round(float(projected), 2)
+    proj_row = (
+        await session.execute(
+            select(OneviewPlannerDataset).where(
+                OneviewPlannerDataset.cp_plan_id == cp_plan_id,
+                OneviewPlannerDataset.date == week_date,
+                OneviewPlannerDataset.kpi_key == KPI_PROJ,
+            )
+        )
+    ).scalar_one_or_none()
+    if proj_row:
+        proj_row.value = val
+    plan.projected[idx] = val
+    await _reflow_ou_for_week(session, cp_plan_id, week_date, val, plan.required[idx], plan, idx)
+
+
 @router.post("/{cap_id}/attrition", response_model=AttritionSubmitResponse)
 async def submit_attrition(
     cap_id: str,
@@ -172,9 +221,10 @@ async def submit_attrition(
         raise HTTPException(status_code=404, detail=f"Plan {cap_id} not found")
 
     n = len(plan.week_labels)
-    series = list(plan.meta.get("sAttrPlan") or [0.0] * n)
-    while len(series) < n:
-        series.append(0.0)
+    old_series = list(live_s_attr_plan(plan))
+    while len(old_series) < n:
+        old_series.append(0.0)
+    series = list(old_series)
 
     for item in body.weeks:
         if item.week_idx < 0 or item.week_idx >= n:
@@ -183,7 +233,39 @@ async def submit_attrition(
 
     cur_idx = int(plan.meta.get("curIdx", 0))
     attr12 = avg_forward(series, cur_idx)
-    await update_plan_meta(session, cap_id, {"sAttrPlan": series, "attr12": attr12})
+    opening = float((plan.headcount or {}).get("opening") or plan.meta.get("hcCur", {}).get("opening") or 0)
+    orig_proj = [float(v or 0) for v in plan.projected]
+    cp_plan_id = cap_to_cp(cap_id)
+
+    cum = 0.0
+    for idx in range(cur_idx, n):
+        base_pct = float(old_series[idx] or 0)
+        new_pct = float(series[idx] or 0)
+        stock = opening if idx == cur_idx else orig_proj[idx]
+        extra = stock * (new_pct - base_pct) / 100.0
+        cum += extra
+        await _write_projected(session, plan, cp_plan_id, idx, orig_proj[idx] - cum)
+
+    fwd_ou = [float(v) for v in plan.ou[cur_idx : cur_idx + 12] if v is not None]
+    live_ou = float(plan.ou[cur_idx]) if 0 <= cur_idx < len(plan.ou) else plan.meta.get("ou", 0)
+    meta_patch = {
+        "sAttrPlan": series,
+        "attr12": attr12,
+        "ou": live_ou,
+        "ouShrink": live_ou,
+        "sustained": round(sum(fwd_ou) / len(fwd_ou), 2) if fwd_ou else plan.meta.get("sustained", 0),
+        "minOUfwd": round(min(fwd_ou), 2) if fwd_ou else plan.meta.get("minOUfwd", 0),
+    }
+    await update_plan_meta(session, cap_id, meta_patch)
+
+    assume_rows = (
+        await session.execute(
+            select(OneviewAttritionAssumption).where(OneviewAttritionAssumption.map_activity_id == cp_plan_id)
+        )
+    ).scalars().all()
+    for row in assume_rows:
+        row.attrition_perc = attr12
+
     await session.commit()
     return AttritionSubmitResponse(cap_id=cap_id, attr12=attr12, updated_count=len(body.weeks))
 
@@ -253,9 +335,31 @@ async def update_headcount(
     loa_in = float(hc.get("loaIn", 0) or 0)
     attr = float(hc.get("attr", 0) or 0)
     promo = float(hc.get("promo", 0) or 0)
-    closing = round(opening + nest + tin - tout + loa_out - loa_in - attr - promo, 2)
+    closing = compute_closing_fte(
+        {
+            "opening": opening,
+            "nest": nest,
+            "tin": tin,
+            "tout": tout,
+            "loa_out": loa_out,
+            "loa_in": loa_in,
+            "attr": attr,
+            "promo": promo,
+        }
+    )
     hc["closing"] = closing
 
+    old_closing = float((plan.headcount or {}).get("closing") or plan.meta.get("closingFTE") or 0)
+    # Compare against persisted meta so a first save of an inconsistent seed still reflows O/U.
+    stored_closing = float(plan.meta.get("closingFTE") or old_closing)
+    delta = closing - stored_closing
+
+    n = len(plan.week_labels)
+    s_attr = list(live_s_attr(plan))
+    if opening > 0 and 0 <= cur_idx < n:
+        s_attr[cur_idx] = round((attr / opening) * 100.0, 2)
+
+    h = plan.hierarchy
     if cur_date is not None:
         for ref_code, api_field in HC_REF_MAP.items():
             meta_key = api_to_meta.get(api_field, api_field)
@@ -272,8 +376,44 @@ async def update_headcount(
             ).scalar_one_or_none()
             if row:
                 row.value = value
+            else:
+                session.add(
+                    OneviewHeaderDetails(
+                        cp_plan_id=cp_plan_id,
+                        dataset_type="Headcount",
+                        date=cur_date,
+                        ref_code=ref_code,
+                        kpi_group="Headcount",
+                        type="Headcount",
+                        sub_type=ref_code,
+                        title=ref_code,
+                        title_type="Actual",
+                        unit="FTE",
+                        value=value,
+                        is_billable=True,
+                        capability_id=cap_id,
+                        program=h.program_name,
+                        site=h.site_name,
+                    )
+                )
 
-    await update_plan_meta(session, cap_id, {"hcCur": hc, "closingFTE": closing})
+    await _shift_projected_forward(session, plan, cp_plan_id, cur_idx, delta)
+
+    fwd_ou = [float(v) for v in plan.ou[cur_idx : cur_idx + 12] if v is not None]
+    live_ou = float(plan.ou[cur_idx]) if 0 <= cur_idx < len(plan.ou) else 0.0
+    await update_plan_meta(
+        session,
+        cap_id,
+        {
+            "hcCur": hc,
+            "closingFTE": closing,
+            "sAttr": s_attr,
+            "ou": live_ou,
+            "ouShrink": live_ou,
+            "sustained": round(sum(fwd_ou) / len(fwd_ou), 2) if fwd_ou else plan.meta.get("sustained", 0),
+            "minOUfwd": round(min(fwd_ou), 2) if fwd_ou else plan.meta.get("minOUfwd", 0),
+        },
+    )
     await session.commit()
 
     out = HeadcountOut(
@@ -318,18 +458,24 @@ async def map_roster(
     elif file_fte is not None and file_fte > 0:
         mapped_fte = float(file_fte)
     else:
-        mapped_fte = float(meta_cls.get("trainHC", roster.plan_hc or 0))
+        mapped_fte = float(meta_cls.get("trainHC") or roster.plan_hc or 0)
+    status = "uploaded" if body.source_filename else "mapped"
     roster.actual_hc = mapped_fte
-    roster.class_status = "mapped"
+    roster.class_status = status
+    roster.billable_hc = mapped_fte
+    roster.graduate_needed = max(0.0, float(roster.plan_hc or 0) - mapped_fte)
     meta_cls = {
         **meta_cls,
-        "status": "mapped",
+        "status": status,
         "actual": mapped_fte,
-        "trainHC": float(meta_cls.get("trainHC", mapped_fte) or mapped_fte),
+        "trainHC": float(meta_cls.get("trainHC") or mapped_fte or 0),
     }
     if body.source_filename:
         meta_cls["rosterFile"] = body.source_filename
         meta_cls["rosterEmployees"] = len(employees)
+    else:
+        meta_cls.pop("rosterFile", None)
+        meta_cls["rosterEmployees"] = 0
 
     cp_plan_id = cap_to_cp(cap_id)
     cur_idx = int(plan.meta.get("curIdx", 0))
@@ -337,12 +483,17 @@ async def map_roster(
     projected_adjustment = mapped_fte - prev_adj
 
     n = len(plan.week_labels)
-    s_hire = list(plan.meta.get("sHire") or [0.0] * n)
+    s_hire = list(live_s_hire(plan))
     if len(s_hire) < n:
         s_hire = list(s_hire) + [0.0] * (n - len(s_hire))
     s_hire = [float(v or 0) for v in s_hire[:n]]
-    if 0 <= cur_idx < n:
-        s_hire[cur_idx] = mapped_fte
+    class_week = week_index_for_date(
+        plan.week_dates, roster.planned_start_date or roster.training_start_date or roster.induction_date
+    )
+    if class_week is None:
+        class_week = cur_idx + int(meta_cls.get("wkRel", 0) or 0)
+    if 0 <= class_week < n:
+        s_hire[class_week] = mapped_fte
 
     await update_plan_meta(
         session,
@@ -379,40 +530,62 @@ async def map_roster(
             )
         )
 
-    for idx, week_date in enumerate(plan.week_dates):
-        if idx < cur_idx:
-            continue
-        proj_row = (
-            await session.execute(
-                select(OneviewPlannerDataset).where(
-                    OneviewPlannerDataset.cp_plan_id == cp_plan_id,
-                    OneviewPlannerDataset.date == week_date,
-                    OneviewPlannerDataset.kpi_key == KPI_PROJ,
-                )
-            )
-        ).scalar_one_or_none()
-        ou_row = (
-            await session.execute(
-                select(OneviewPlannerDataset).where(
-                    OneviewPlannerDataset.cp_plan_id == cp_plan_id,
-                    OneviewPlannerDataset.date == week_date,
-                    OneviewPlannerDataset.kpi_key == KPI_OU,
-                )
-            )
-        ).scalar_one_or_none()
-        if proj_row and projected_adjustment:
-            proj_row.value = float(proj_row.value or 0) + projected_adjustment
-            plan.projected[idx] = float(proj_row.value)
-        if ou_row:
-            ou_row.value = plan.projected[idx] - plan.required[idx]
-            plan.ou[idx] = float(ou_row.value)
+    await _shift_projected_forward(session, plan, cp_plan_id, cur_idx, projected_adjustment)
 
     await session.commit()
     return RosterMapResponse(
         cap_id=cap_id,
         mapped_fte=mapped_fte,
         projected_adjustment=projected_adjustment,
-        status="mapped",
+        status=status,
         employee_count=len(employees),
         source_filename=body.source_filename,
     )
+
+
+async def revert_ghost_roster_maps(session: AsyncSession) -> list[str]:
+    """Unmap classes that were marked mapped with no uploaded file (seed / agent leftovers)."""
+    reverted: list[str] = []
+    plans = await load_all_plans(session)
+    for plan in plans:
+        roster = plan.roster_rows[0] if plan.roster_rows else None
+        if not roster:
+            continue
+        status = (roster.class_status or (plan.meta.get("cls") or {}).get("status") or "").lower()
+        if status not in ("mapped", "uploaded"):
+            continue
+        meta_cls = dict(plan.meta.get("cls") or {})
+        if meta_cls.get("rosterFile"):
+            continue
+        prev_adj = float(plan.meta.get("rosterProjectedAdj") or roster.actual_hc or 0)
+        roster.actual_hc = 0.0
+        roster.class_status = "missing"
+        roster.billable_hc = 0.0
+        roster.actual_start_date = None
+        meta_cls["status"] = "missing"
+        meta_cls["actual"] = 0.0
+        meta_cls.pop("rosterFile", None)
+        meta_cls["rosterEmployees"] = 0
+        s_hire = list(live_s_hire(plan))
+        class_week = week_index_for_date(
+            plan.week_dates, roster.planned_start_date or roster.training_start_date or roster.induction_date
+        )
+        if class_week is None:
+            class_week = int(plan.meta.get("curIdx", 0)) + int(meta_cls.get("wkRel", 0) or 0)
+        if 0 <= class_week < len(s_hire):
+            s_hire[class_week] = 0.0
+        await update_plan_meta(
+            session,
+            plan.cap_id,
+            {
+                "cls": meta_cls,
+                "hire12": 0.0,
+                "sHire": s_hire,
+                "rosterProjectedAdj": 0.0,
+            },
+        )
+        if abs(prev_adj) >= 0.0001:
+            await _shift_projected_forward(session, plan, cap_to_cp(plan.cap_id), int(plan.meta.get("curIdx", 0)), -prev_adj)
+        reverted.append(plan.cap_id)
+    await session.commit()
+    return reverted

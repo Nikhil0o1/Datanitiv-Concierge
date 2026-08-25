@@ -20,6 +20,14 @@ import { computeXutil, defaultOtWeekly, fwdCount, hireTiming, planRec, scaleDono
 const SHOW_SCENARIO_REPLAY = false;
 
 /** Forward planning horizon: this week through next 12 weeks (same window as shrink12 / Overview). */
+const SHRINK_MAX = 70;
+
+function clampShrink(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(SHRINK_MAX, Math.max(0, Math.round(n * 100) / 100));
+}
+
 function buildEditorWeeks(plan) {
   if (!plan) return [];
   const i0 = plan.curIdx;
@@ -37,6 +45,50 @@ function buildEditorWeeks(plan) {
     });
   }
   return rows;
+}
+
+function mergeEditorWeeks(plan, prev, dirty) {
+  const next = buildEditorWeeks(plan);
+  if (!dirty || !prev?.length) return next;
+  const curByIdx = new Map(prev.map((w) => [w.weekIdx, w.cur]));
+  return next.map((w) => (curByIdx.has(w.weekIdx) ? { ...w, cur: curByIdx.get(w.weekIdx) } : w));
+}
+
+const ATTR_MAX = 40;
+
+function clampAttr(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(ATTR_MAX, Math.max(0, Math.round(n * 100) / 100));
+}
+
+function buildAttrWeeks(plan) {
+  if (!plan) return [];
+  const i0 = plan.curIdx;
+  const opening = Number(plan.hcCur?.opening) || Number(plan.sProj?.[i0]) || 0;
+  const rows = [];
+  for (let i = 0; i < 12; i++) {
+    if (i0 + i >= plan.weeks.length) break;
+    const idx = i0 + i;
+    const base = plan.sAttrPlan[idx] ?? plan.sAttr[idx] ?? 0;
+    const proj = Number(plan.sProj[idx]) || 0;
+    rows.push({
+      weekIdx: idx,
+      wk: plan.weeks[idx],
+      base,
+      cur: base,
+      proj,
+      stock: i === 0 ? opening : proj,
+    });
+  }
+  return rows;
+}
+
+function mergeAttrWeeks(plan, prev, dirty) {
+  const next = buildAttrWeeks(plan);
+  if (!dirty || !prev?.length) return next;
+  const curByIdx = new Map(prev.map((w) => [w.weekIdx, w.cur]));
+  return next.map((w) => (curByIdx.has(w.weekIdx) ? { ...w, cur: curByIdx.get(w.weekIdx) } : w));
 }
 
 export default function PlanningApp({ logoSrc }) {
@@ -83,10 +135,15 @@ export default function PlanningApp({ logoSrc }) {
     chartShr: null,
     editorReady: false,
     editorWeeks: [],
+    attrWeeks: [],
     editSrc: 'plan values',
     netReq: null,
     shrLastEdit: null,
     doneShr: false,
+    shrDirty: false,
+    attrLastEdit: null,
+    doneAttr: false,
+    attrDirty: false,
     doneRoster: false,
     doneRec: false,
     execDone: false,
@@ -177,7 +234,6 @@ export default function PlanningApp({ logoSrc }) {
             done: posted || Boolean(prev?.done),
           };
         }),
-        editorWeeks: buildEditorWeeks(rows.find((r) => r.capId === s.activePlan) || rows[0]),
       }));
     } catch (e) {
       console.error(e);
@@ -219,6 +275,7 @@ export default function PlanningApp({ logoSrc }) {
           ...s,
           packages: (pkg || []).map((p) => ({ ...p, ticked: false, done: false })),
           editorWeeks: buildEditorWeeks(rows.find((r) => r.capId === 'CAP00010')),
+          attrWeeks: buildAttrWeeks(rows.find((r) => r.capId === 'CAP00010')),
           revealed: { dec: true, auto: true },
           foldVisible: true,
           counts: {
@@ -234,9 +291,29 @@ export default function PlanningApp({ logoSrc }) {
     })();
   }, []);
 
+  const editorPlanRef = useRef(null);
   useEffect(() => {
     const p = data.find((r) => r.capId === state.activePlan);
-    if (p) setState((s) => ({ ...s, editorWeeks: buildEditorWeeks(p) }));
+    if (!p) return;
+    const switched = editorPlanRef.current !== state.activePlan;
+    editorPlanRef.current = state.activePlan;
+    setState((s) => ({
+      ...s,
+      ...(switched
+        ? {
+            shrDirty: false,
+            doneShr: false,
+            editSrc: 'plan values',
+            shrLastEdit: null,
+            attrDirty: false,
+            doneAttr: false,
+            attrLastEdit: null,
+          }
+        : {}),
+      editorWeeks:
+        switched || !s.shrDirty ? buildEditorWeeks(p) : mergeEditorWeeks(p, s.editorWeeks, true),
+      attrWeeks: switched || !s.attrDirty ? buildAttrWeeks(p) : mergeAttrWeeks(p, s.attrWeeks, true),
+    }));
   }, [state.activePlan, data]);
 
   useEffect(() => {
@@ -266,22 +343,85 @@ export default function PlanningApp({ logoSrc }) {
   const setEditorWeek = (k, v) => {
     setState((s) => {
       const ew = [...s.editorWeeks];
-      if (ew[k]) ew[k] = { ...ew[k], cur: v };
-      return { ...s, editorWeeks: ew, editSrc: 'edited by you', shrLastEdit: k, doneShr: false };
+      if (ew[k]) ew[k] = { ...ew[k], cur: clampShrink(v) };
+      return { ...s, editorWeeks: ew, editSrc: 'edited by you', shrLastEdit: k, doneShr: false, shrDirty: true };
     });
   };
+
+  const setAttrWeek = (k, v) => {
+    setState((s) => {
+      const aw = [...(s.attrWeeks || [])];
+      if (aw[k]) aw[k] = { ...aw[k], cur: clampAttr(v) };
+      return { ...s, attrWeeks: aw, attrLastEdit: k, doneAttr: false, attrDirty: true };
+    });
+  };
+
+  const handleApplyAttritionValue = useCallback(() => {
+    setState((s) => {
+      const aw = s.attrWeeks || [];
+      if (!aw.length) return s;
+      const idx = s.attrLastEdit != null && aw[s.attrLastEdit] ? s.attrLastEdit : 0;
+      const val = clampAttr(aw[idx].cur);
+      return {
+        ...s,
+        attrWeeks: aw.map((w) => ({ ...w, cur: val })),
+        doneAttr: false,
+        attrDirty: true,
+      };
+    });
+  }, [setState]);
+
+  const handleApplyAttritionPct = useCallback(() => {
+    setState((s) => {
+      const aw = s.attrWeeks || [];
+      if (!aw.length) return s;
+      const idx = s.attrLastEdit != null && aw[s.attrLastEdit] ? s.attrLastEdit : 0;
+      const src = aw[idx];
+      const base = src.base;
+      if (base == null || base === 0) {
+        const val = clampAttr(src.cur);
+        return {
+          ...s,
+          attrWeeks: aw.map((w) => ({ ...w, cur: val })),
+          doneAttr: false,
+          attrDirty: true,
+        };
+      }
+      const pct = (src.cur - base) / base;
+      return {
+        ...s,
+        attrWeeks: aw.map((w) => ({
+          ...w,
+          cur: clampAttr(Math.round(w.base * (1 + pct) * 100) / 100),
+        })),
+        doneAttr: false,
+        attrDirty: true,
+      };
+    });
+  }, [setState]);
+
+  const handleResetAttrition = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      attrWeeks: (s.attrWeeks || []).map((w) => ({ ...w, cur: w.base })),
+      doneAttr: false,
+      attrDirty: false,
+      attrLastEdit: null,
+    }));
+  }, [setState]);
 
   const handleApplyShrinkageValue = useCallback(() => {
     setState((s) => {
       const ew = s.editorWeeks || [];
       if (!ew.length) return s;
       const idx = s.shrLastEdit != null && ew[s.shrLastEdit] ? s.shrLastEdit : 0;
-      const val = ew[idx].cur;
+      const val = clampShrink(ew[idx].cur);
       return {
         ...s,
         editorWeeks: ew.map((w) => ({ ...w, cur: val })),
         editSrc: `applied ${val.toFixed(1)}% to all weeks`,
         doneShr: false,
+        shrDirty: true,
       };
     });
   }, [setState]);
@@ -295,29 +435,30 @@ export default function PlanningApp({ logoSrc }) {
       const base = src.base;
       if (base == null || base === 0) {
         // no % vs base — fall back to absolute value apply
-        const val = src.cur;
+        const val = clampShrink(src.cur);
         return {
           ...s,
           editorWeeks: ew.map((w) => ({ ...w, cur: val })),
           editSrc: `applied ${val.toFixed(1)}% to all weeks`,
           doneShr: false,
+          shrDirty: true,
         };
       }
       const pct = (src.cur - base) / base;
       return {
         ...s,
         editorWeeks: ew.map((w) => {
-          const next = Math.min(95, Math.round(w.base * (1 + pct) * 100) / 100);
+          const next = clampShrink(Math.round(w.base * (1 + pct) * 100) / 100);
           return { ...w, cur: next };
         }),
         editSrc: `applied ${(pct * 100 >= 0 ? '+' : '')}${(pct * 100).toFixed(1)}% to all weeks`,
         doneShr: false,
+        shrDirty: true,
       };
     });
   }, [setState]);
 
   const handleSubmitShrinkage = useCallback(async () => {
-    setState((s) => ({ ...s, doneShr: true }));
     try {
       await api.submitShrinkage(
         stateRef.current.activePlan,
@@ -326,8 +467,10 @@ export default function PlanningApp({ logoSrc }) {
       emit('plan.shrinkage.submitted', {
         metadata: { cap_id: stateRef.current.activePlan, week_count: stateRef.current.editorWeeks.length, success: true },
       });
+      setState((s) => ({ ...s, doneShr: true, shrDirty: false, editSrc: 'plan values' }));
       await refreshPortfolio();
     } catch (e) {
+      setState((s) => ({ ...s, doneShr: false }));
       emitError('plan.shrinkage.failed', e, { cap_id: stateRef.current.activePlan });
       console.error(e);
     }
@@ -339,14 +482,28 @@ export default function PlanningApp({ logoSrc }) {
       editorWeeks: (s.editorWeeks || []).map((w) => ({ ...w, cur: w.base })),
       editSrc: 'plan values',
       doneShr: false,
+      shrDirty: false,
       shrLastEdit: null,
     }));
   }, [setState]);
 
-  const handleSubmitAttrition = useCallback(async (weeks) => {
-    await api.submitAttrition(stateRef.current.activePlan, weeks);
-    await refreshPortfolio();
-  }, [refreshPortfolio]);
+  const handleSubmitAttrition = useCallback(async () => {
+    try {
+      await api.submitAttrition(
+        stateRef.current.activePlan,
+        (stateRef.current.attrWeeks || []).map((w) => ({ week_idx: w.weekIdx, attr_plan: w.cur })),
+      );
+      emit('plan.attrition.submitted', {
+        metadata: { cap_id: stateRef.current.activePlan, week_count: stateRef.current.attrWeeks?.length, success: true },
+      });
+      setState((s) => ({ ...s, doneAttr: true, attrDirty: false }));
+      await refreshPortfolio();
+    } catch (e) {
+      setState((s) => ({ ...s, doneAttr: false }));
+      emitError('plan.attrition.failed', e, { cap_id: stateRef.current.activePlan });
+      console.error(e);
+    }
+  }, [setState, refreshPortfolio]);
 
   const handleSubmitForecast = useCallback(async (body) => {
     await api.submitForecast(stateRef.current.activePlan, body);
@@ -369,18 +526,21 @@ export default function PlanningApp({ logoSrc }) {
       id = capIdOrOpts.cap_id || capIdOrOpts.capId || id;
     }
     const payload = {
+      ...(body.class_id != null ? { class_id: body.class_id } : {}),
       ...(body.train_hc != null ? { train_hc: body.train_hc } : {}),
       ...(body.employees ? { employees: body.employees } : {}),
       ...(body.source_filename ? { source_filename: body.source_filename } : {}),
     };
-    setState((s) => ({ ...s, doneRoster: true }));
     try {
-      await api.mapRoster(stateRef.current.activePlan, {});
-      emit('plan.roster.mapped', { metadata: { cap_id: stateRef.current.activePlan, success: true } });
+      const res = await api.mapRoster(id, payload);
+      setState((s) => ({ ...s, doneRoster: true }));
+      emit('plan.roster.mapped', {
+        metadata: { cap_id: id, success: true, mapped_fte: res?.mapped_fte, status: res?.status },
+      });
       await refreshPortfolio();
       return res;
     } catch (e) {
-      emitError('plan.roster.failed', e, { cap_id: stateRef.current.activePlan });
+      emitError('plan.roster.failed', e, { cap_id: id });
       console.error(e);
       setState((s) => ({ ...s, doneRoster: false }));
       throw e;
@@ -651,7 +811,6 @@ export default function PlanningApp({ logoSrc }) {
     openPlan: (capId) => {
       emit('plan.opened', { metadata: { cap_id: capId, source: 'user' } });
       const p = data.find((r) => r.capId === capId);
-      const tabs = tabsForPlan(p);
       const rosterOk =
         p?.cls?.status === 'mapped' || p?.cls?.status === 'uploaded';
       setState((s) => ({
@@ -660,13 +819,17 @@ export default function PlanningApp({ logoSrc }) {
         activePlan: capId,
         focusCap: capId,
         activeTab: 'ov',
-        shownTabs: tabs,
+        shownTabs: ['ov'],
         editorWeeks: p ? buildEditorWeeks(p) : s.editorWeeks,
+        attrWeeks: p ? buildAttrWeeks(p) : s.attrWeeks,
         editorReady: true,
         chartOU: { capId, ready: true, mark: 8, lbl: '' },
         chartShr: { capId, ready: true },
         doneRec: false,
         doneShr: false,
+        shrDirty: false,
+        doneAttr: false,
+        attrDirty: false,
         doneRoster: rosterOk,
       }));
       if (p) {
@@ -908,20 +1071,21 @@ export default function PlanningApp({ logoSrc }) {
                   <div className="pane on" data-view="plan" ref={paneRef}>
                     <div className="tabs">
                       <span className="lb">{tabsForPlan(activePlan).length} steps</span>
-                      {tabsForPlan(activePlan).map((k) => (
-                        <span
-                          key={k}
-                          className={`tab ${state.shownTabs.includes(k) ? 'shown' : ''} ${state.activeTab === k ? 'on' : ''}`}
-                          data-tab={k}
-                          onClick={() => {
-                            engine.markHumanActive();
-                            handleTabClick(k);
-                          }}
-                        >
-                          {TAB_LABELS[k]}
-                        </span>
-                      ))}
-                      <span className="peek" id="peekTxt">{state.shownTabs.length ? 'all tabs open' : 'peeking — agent skipped this'}</span>
+                      <div className="tab-list">
+                        {tabsForPlan(activePlan).map((k) => (
+                          <span
+                            key={k}
+                            className={`tab ${state.shownTabs.includes(k) ? 'shown' : ''} ${state.activeTab === k ? 'on' : ''}`}
+                            data-tab={k}
+                            onClick={() => {
+                              engine.markHumanActive();
+                              handleTabClick(k);
+                            }}
+                          >
+                            {TAB_LABELS[k]}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     <div className="tp-body">
                       <PlanTabs
@@ -937,6 +1101,10 @@ export default function PlanningApp({ logoSrc }) {
                         onApplyShrinkageValue={handleApplyShrinkageValue}
                         onApplyShrinkagePct={handleApplyShrinkagePct}
                         onSubmitAttrition={handleSubmitAttrition}
+                        onResetAttrition={handleResetAttrition}
+                        onApplyAttritionValue={handleApplyAttritionValue}
+                        onApplyAttritionPct={handleApplyAttritionPct}
+                        onAttritionChange={setAttrWeek}
                         onSubmitForecast={handleSubmitForecast}
                         onSaveHeadcount={handleSaveHeadcount}
                         onMapRoster={handleMapRoster}

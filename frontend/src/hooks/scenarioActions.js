@@ -105,7 +105,7 @@ export function createScenarioActions({
         setState((s) => {
           const ew = [...s.editorWeeks];
           if (ew[k]) ew[k] = { ...ew[k], cur: v };
-          return { ...s, editorWeeks: ew, editSrc: 'agent' };
+          return { ...s, editorWeeks: ew, editSrc: 'agent', doneShr: false, shrDirty: true };
         });
         await wait(useCursor() ? 230 : 40);
       }

@@ -1,5 +1,6 @@
 /** Convert API plan detail into prototype-compatible DATA row, enriched from HTML demo fields. */
 import enrichment from '../data/htmlPlanEnrichment.json';
+import { computeClosing } from './planLogic';
 
 const BY_CAP = Object.fromEntries(enrichment.map((e) => [e.capId, e]));
 
@@ -13,6 +14,23 @@ function pickSeries(apiVal, enrichVal, n, fill = 0) {
   return zeros(n, fill);
 }
 
+function hcFromApi(h) {
+  if (!h) return null;
+  const hc = {
+    opening: Number(h.opening) || 0,
+    nest: Number(h.nest) || 0,
+    tin: Number(h.tin) || 0,
+    tout: Number(h.tout) || 0,
+    loaIn: Number(h.loa_in ?? h.loaIn) || 0,
+    loaOut: Number(h.loa_out ?? h.loaOut) || 0,
+    attr: Number(h.attr) || 0,
+    promo: Number(h.promo) || 0,
+    closing: 0,
+  };
+  hc.closing = computeClosing(hc);
+  return hc;
+}
+
 export function detailToDataRow(detail) {
   const weeks = detail.weeks || [];
   const n = weeks.length;
@@ -21,57 +39,50 @@ export function detailToDataRow(detail) {
     detail.roster_classes?.find((c) => c.status === 'planned' && String(c.class_name || '').startsWith('EXEC-HIRE')) ||
     detail.roster_classes?.find((c) => c.status === 'mapped' || c.status === 'uploaded') ||
     detail.roster_classes?.find((c) => c.status === 'missing') ||
-    detail.roster_classes?.[0];
+    detail.roster_classes?.[0] ||
+    null;
   const enrichCls = enrich.cls || null;
   const clsSrc =
     apiCls || enrichCls
       ? {
+          id: apiCls?.id,
           name: apiCls?.class_name || enrichCls?.name || enrichCls?.className,
-          date: enrichCls?.date || apiCls?.class_date,
-          wkRel: enrichCls?.wkRel ?? apiCls?.wk_rel ?? 0,
+          date: apiCls?.class_date || enrichCls?.date,
+          wkRel: apiCls?.wk_rel ?? enrichCls?.wkRel ?? 0,
           plan: apiCls?.plan_hc ?? enrichCls?.plan ?? 0,
-          actual: apiCls?.actual_hc ?? enrichCls?.actual ?? 0,
-          trainHC: enrichCls?.trainHC ?? apiCls?.train_hc ?? apiCls?.plan_hc ?? enrichCls?.plan ?? 0,
-          status: apiCls?.status || enrichCls?.status || 'missing',
-          trainWk: enrichCls?.trainWk ?? apiCls?.train_wk ?? 2,
-          nestWk: enrichCls?.nestWk ?? apiCls?.nest_wk ?? 1,
+          actual: apiCls?.actual_hc ?? 0,
+          trainHC: apiCls?.train_hc ?? enrichCls?.trainHC ?? apiCls?.plan_hc ?? enrichCls?.plan ?? 0,
+          status: apiCls?.status || 'missing',
+          trainWk: apiCls?.train_wk ?? enrichCls?.trainWk ?? 2,
+          nestWk: apiCls?.nest_wk ?? enrichCls?.nestWk ?? 1,
+          rosterFile: apiCls?.roster_file || null,
+          employeeCount: apiCls?.employee_count ?? 0,
         }
       : null;
 
-  const hcCur = detail.headcount
-    ? {
-        opening: detail.headcount.opening,
-        nest: detail.headcount.nest,
-        tin: detail.headcount.tin,
-        tout: detail.headcount.tout,
-        loaIn: detail.headcount.loa_in,
-        loaOut: detail.headcount.loa_out,
-        attr: detail.headcount.attr,
-        promo: detail.headcount.promo,
-        closing: detail.headcount.closing,
-      }
-    : enrich.hcCur || null;
+  const hcCur = hcFromApi(detail.headcount) || hcFromApi(enrich.hcCur);
+  const hcLast =
+    hcFromApi(detail.headcount_last) ||
+    hcFromApi(enrich.hcLast) ||
+    (hcCur
+      ? hcFromApi({
+          opening: hcCur.opening,
+          nest: 0,
+          tin: 0,
+          tout: 0,
+          loa_in: 0,
+          loa_out: 0,
+          attr: 0,
+          promo: 0,
+        })
+      : null);
 
-  const hcLast = enrich.hcLast || (hcCur
-    ? {
-        opening: hcCur.opening,
-        nest: 0,
-        tin: 0,
-        tout: 0,
-        loaIn: 0,
-        loaOut: 0,
-        attr: 0,
-        promo: 0,
-        closing: hcCur.opening,
-      }
-    : null);
+  const closingFTE = detail.closing_fte ?? hcCur?.closing ?? enrich.closingFTE ?? 0;
+  const availHrs = detail.avail_hrs ?? enrich.availHrs ?? 40;
 
   const attr12 = detail.attr12 ?? enrich.attr12 ?? 0;
-  const apiHire =
-    apiCls && (apiCls.status === 'mapped' || apiCls.status === 'uploaded' || apiCls.status === 'partial')
-      ? Number(apiCls.actual_hc) || 0
-      : null;
-  const hire12 = apiHire != null && apiHire > 0 ? apiHire : detail.hire12 ?? enrich.hire12 ?? 0;
+  const hire12 = detail.hire12 ?? 0;
+  const nClasses12 = detail.n_classes_12 ?? 0;
   const sShrinkPlan = weeks.map((w) => w.shrink_plan);
   const curIdx = detail.cur_week_idx || 0;
   const fwdShrink = sShrinkPlan.slice(curIdx, curIdx + 12).filter((v) => v != null);
@@ -96,13 +107,13 @@ export function detailToDataRow(detail) {
     ouShrink: detail.ou_shrink ?? enrich.ouShrink ?? detail.ou ?? 0,
     sustained: detail.sustained ?? enrich.sustained ?? 0,
     minOUfwd: detail.min_ou_fwd ?? enrich.minOUfwd ?? 0,
-    closingFTE: detail.closing_fte ?? enrich.closingFTE ?? hcCur?.closing ?? 0,
-    availHrs: detail.avail_hrs ?? enrich.availHrs ?? 40,
+    closingFTE,
+    availHrs,
     shrink12,
     attr12,
     hire12,
-    recOT: enrich.recOT ?? 0,
-    nClasses12: enrich.nClasses12 ?? 0,
+    recOT: Math.round(0.05 * closingFTE * availHrs * 100) / 100,
+    nClasses12,
     billable: detail.billable,
     fBias: detail.f_bias ?? enrich.fBias ?? null,
     aBias: detail.a_bias ?? enrich.aBias ?? null,
@@ -113,21 +124,14 @@ export function detailToDataRow(detail) {
     sReq: weeks.map((w) => w.required),
     sAttr: pickSeries(detail.s_attr, enrich.sAttr, n, attr12),
     sAttrPlan: pickSeries(detail.s_attr_plan, enrich.sAttrPlan, n, 0),
-    sHire: (() => {
-      const fromApi = pickSeries(detail.s_hire, enrich.sHire, n, 0);
-      if (hire12 > 0 && !(Array.isArray(detail.s_hire) && detail.s_hire.some((v) => v))) {
-        const copy = [...fromApi];
-        copy[curIdx] = hire12;
-        return copy;
-      }
-      return fromApi;
-    })(),
+    sHire: pickSeries(detail.s_hire, enrich.sHire, n, 0),
     sFcst: detail.s_fcst ?? enrich.sFcst ?? null,
     sActVol: detail.s_act_vol ?? enrich.sActVol ?? null,
     sAhtGoal: detail.s_aht_goal ?? enrich.sAhtGoal ?? null,
     sAhtAct: detail.s_aht_act ?? enrich.sAhtAct ?? null,
     cls: clsSrc
       ? {
+          id: clsSrc.id,
           name: clsSrc.name || clsSrc.className,
           date: clsSrc.date,
           wkRel: clsSrc.wkRel,
@@ -137,6 +141,8 @@ export function detailToDataRow(detail) {
           status: clsSrc.status,
           trainWk: clsSrc.trainWk,
           nestWk: clsSrc.nestWk,
+          rosterFile: clsSrc.rosterFile,
+          employeeCount: clsSrc.employeeCount,
         }
       : null,
     hcCur,

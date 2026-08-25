@@ -1,6 +1,34 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { f1, f2 } from '../utils/format';
 
+function seriesColor(series, v, i) {
+  if (!series) return '#2a78d6';
+  return typeof series.color === 'function' ? series.color(v, i) : series.color || '#2a78d6';
+}
+
+function hoverItems(bars, line, i, yFmt, valueUnit) {
+  const unit = valueUnit ? ` ${valueUnit}` : '';
+  const items = [];
+  (bars || []).forEach((series) => {
+    const v = series.data?.[i];
+    if (v == null) return;
+    items.push({
+      label: series.tipLabel || series.label || 'O/U',
+      text: `${yFmt(v)}${unit}`,
+      color: seriesColor(series, v, i),
+    });
+  });
+  const lv = line?.data?.[i];
+  if (lv != null) {
+    items.push({
+      label: line.tipLabel || line.label || 'Plan',
+      text: `${yFmt(lv)}${unit}`,
+      color: line.color || '#c98aa0',
+    });
+  }
+  return items;
+}
+
 /** Generic SVG bar (+ optional draggable line) series chart. */
 export default function SeriesChart({
   weeks = [],
@@ -13,20 +41,20 @@ export default function SeriesChart({
   zeroLine = false,
   /** Allow dragging line points from this index (usually curIdx). */
   dragFromIdx = null,
+  dragUntilIdx = null,
   onDragPoint = null,
   snap = 0.5,
   minV = 0,
   maxV = 95,
-  /** Hover tooltip — matches HTML Chart.js style (dark tip, week + values). */
-  showTooltip = true,
-  tooltipUnit = 'FTE',
+  valueUnit = '',
+  thinBars = true,
+  dragHint = null,
 }) {
   const svgRef = useRef(null);
   const dragIdxRef = useRef(null);
   const onDragRef = useRef(onDragPoint);
   onDragRef.current = onDragPoint;
   const [dragIdx, setDragIdx] = useState(null);
-  const [hoverIdx, setHoverIdx] = useState(null);
   const lineData = line?.data || null;
 
   const n = weeks.length || bars[0]?.data?.length || lineData?.length || 0;
@@ -43,6 +71,7 @@ export default function SeriesChart({
     if (lineData) lineData.forEach((v) => v != null && vals.push(v));
     if (!vals.length) vals.push(0);
     if (zeroLine) vals.push(0);
+    // keep headroom while dragging
     if (dragFromIdx != null) {
       vals.push(minV, maxV);
     }
@@ -85,13 +114,16 @@ export default function SeriesChart({
 
   const onDragStart = (i, e) => {
     if (dragFromIdx == null || i < dragFromIdx || !onDragRef.current) return;
+    if (dragUntilIdx != null && i > dragUntilIdx) return;
     if (typeof e.button === 'number' && e.button !== 0) return;
+    // pointerdown + mousedown both fire in some browsers — only start once
     if (dragIdxRef.current != null) return;
     e.preventDefault();
     e.stopPropagation();
     dragIdxRef.current = i;
     setDragIdx(i);
 
+    // Listen for both pointer + mouse moves (Playwright / some browsers only emit one)
     const move = (ev) => {
       if (dragIdxRef.current == null) return;
       const v = valueFromClientY(ev.clientY);
@@ -112,67 +144,13 @@ export default function SeriesChart({
     window.addEventListener('pointercancel', up);
   };
 
-  const tipLines = useMemo(() => {
-    if (hoverIdx == null || hoverIdx < 0 || hoverIdx >= n) return [];
-    const lines = [];
-    bars.forEach((series) => {
-      const v = series.data?.[hoverIdx];
-      if (v == null) return;
-      const label = series.label || 'Value';
-      if (/o\/u/i.test(label) || zeroLine) {
-        lines.push({ label, text: `O/U: ${f2(v)} ${tooltipUnit}` });
-      } else if (/%/.test(label) || tooltipUnit === '%') {
-        lines.push({ label, text: `${label}: ${f2(v)}%` });
-      } else {
-        lines.push({
-          label,
-          text: `${label}: ${f2(v)}${tooltipUnit ? ` ${tooltipUnit}` : ''}`,
-        });
-      }
-    });
-    if (lineData?.[hoverIdx] != null) {
-      const label = line?.label || 'Plan';
-      lines.push({
-        label,
-        text:
-          tooltipUnit === '%'
-            ? `${label}: ${f2(lineData[hoverIdx])}%`
-            : `${label}: ${f2(lineData[hoverIdx])}${tooltipUnit ? ` ${tooltipUnit}` : ''}`,
-      });
-    }
-    return lines;
-  }, [hoverIdx, n, bars, lineData, line?.label, zeroLine, tooltipUnit]);
-
-  const tipLinesUnique = useMemo(() => {
-    const seen = new Set();
-    return tipLines.filter((ln) => {
-      if (seen.has(ln.text)) return false;
-      seen.add(ln.text);
-      return true;
-    });
-  }, [tipLines]);
-
-  const updateHoverFromClientX = useCallback(
-    (clientX) => {
-      if (!showTooltip || !svgRef.current || !layoutRef.current) return;
-      if (dragIdxRef.current != null) return;
-      const lay = layoutRef.current;
-      const rect = svgRef.current.getBoundingClientRect();
-      const px = ((clientX - rect.left) / rect.width) * lay.W;
-      const idx = Math.floor((px - lay.L) / lay.bw);
-      const count = weeks.length || bars[0]?.data?.length || line?.data?.length || 0;
-      if (idx < 0 || idx >= count) {
-        setHoverIdx(null);
-        return;
-      }
-      setHoverIdx(idx);
-    },
-    [showTooltip, weeks.length, bars, line?.data?.length],
-  );
+  const [hoverI, setHoverI] = useState(null);
 
   if (!n || !layout) return null;
   const { W, H, L, R, T, B, lo, Y, bw, zy } = layout;
   const canDrag = dragFromIdx != null && typeof onDragPoint === 'function';
+  const barW = thinBars ? Math.max(2.2, Math.min(4.2, bw * 0.18)) : bw * 0.56;
+  const hoverTips = hoverI == null ? [] : hoverItems(bars, line, hoverI, yFmt, valueUnit);
 
   const grid = [];
   for (let t = 0; t <= 4; t++) {
@@ -196,24 +174,18 @@ export default function SeriesChart({
     linePath = pts.length ? `M ${pts.join(' L ')}` : '';
   }
 
-  const tipLeftPct = hoverIdx != null ? ((L + bw * hoverIdx + bw * 0.5) / W) * 100 : 0;
-
   return (
-    <div
-      className={`chart on ${canDrag ? 'draggable-chart' : ''}`}
-      style={{ marginTop: 8, position: 'relative' }}
-      onMouseLeave={() => setHoverIdx(null)}
-    >
+    <div className={`chart on ${canDrag ? 'draggable-chart' : ''}`} style={{ marginTop: 8, position: 'relative' }}>
       {canDrag ? (
         <div className="dragnote" style={{ marginBottom: 4 }}>
-          ↕ Drag the plan points for any future week (snaps to {snap})
+          {dragHint || `↕ Drag the plan points for any future week (snaps to ${snap})`}
         </div>
       ) : null}
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         style={{ touchAction: canDrag ? 'none' : undefined, cursor: dragIdx != null ? 'ns-resize' : undefined }}
-        onMouseMove={(e) => updateHoverFromClientX(e.clientX)}
+        onMouseLeave={() => setHoverI(null)}
       >
         {grid}
         {zeroLine ? <line className="zl" x1={L} y1={zy} x2={W - R} y2={zy} /> : null}
@@ -221,9 +193,8 @@ export default function SeriesChart({
           (series.data || []).map((v, i) => {
             if (v == null) return null;
             const color = typeof series.color === 'function' ? series.color(v, i) : series.color || '#2a78d6';
-            const bx = L + bw * i + bw * 0.22;
-            const w = bw * 0.56;
-            const dim = hoverIdx != null && hoverIdx !== i;
+            const bx = L + bw * i + bw * 0.5 - barW / 2;
+            const dim = hoverI != null && hoverI !== i;
             if (zeroLine) {
               const y = v >= 0 ? Y(v) : zy;
               const h = Math.max(1.5, Math.abs(Y(v) - zy));
@@ -232,12 +203,11 @@ export default function SeriesChart({
                   key={`${si}-${i}`}
                   x={bx}
                   y={y}
-                  width={w}
+                  width={barW}
                   height={h}
-                  rx="2.5"
+                  rx={barW / 2}
                   fill={color}
-                  opacity={dim ? 0.35 : 1}
-                  pointerEvents="none"
+                  opacity={dim ? 0.38 : hoverI === i ? 1 : 0.92}
                 />
               );
             }
@@ -248,57 +218,37 @@ export default function SeriesChart({
                 key={`${si}-${i}`}
                 x={bx}
                 y={y}
-                width={w}
+                width={barW}
                 height={h}
-                rx="2.5"
+                rx={barW / 2}
                 fill={color}
-                opacity={dim ? 0.35 : 1}
-                pointerEvents="none"
+                opacity={dim ? 0.38 : hoverI === i ? 1 : 0.92}
               />
             );
           }),
         )}
         {linePath ? (
-          <path
-            d={linePath}
-            fill="none"
-            stroke={line.color || '#c98aa0'}
-            strokeWidth="2"
-            strokeDasharray={line.dash || undefined}
-            pointerEvents="none"
-          />
+          <path d={linePath} fill="none" stroke={line.color || '#c98aa0'} strokeWidth="2" strokeDasharray={line.dash || undefined} />
         ) : null}
         {lineData &&
           lineData.map((v, i) => {
             if (v == null) return null;
             const forward = i >= curIdx;
             if (!forward && dragFromIdx != null) return null;
-            const draggable = canDrag && i >= dragFromIdx;
+            const draggable = canDrag && i >= dragFromIdx && (dragUntilIdx == null || i <= dragUntilIdx);
             return (
-              <g key={`pt${i}`}>
-                {draggable ? (
-                  <circle
-                    cx={L + bw * i + bw * 0.5}
-                    cy={Y(v)}
-                    r={14}
-                    fill="transparent"
-                    style={{ cursor: 'ns-resize' }}
-                    onPointerDown={(e) => onDragStart(i, e)}
-                    onMouseDown={(e) => onDragStart(i, e)}
-                  />
-                ) : null}
-                <circle
-                  cx={L + bw * i + bw * 0.5}
-                  cy={Y(v)}
-                  r={draggable ? (dragIdx === i ? 6 : 5) : 3.5}
-                  fill={line.color || '#c98aa0'}
-                  stroke="#fff"
-                  strokeWidth="1.2"
-                  style={{ cursor: draggable ? 'ns-resize' : 'default', pointerEvents: draggable ? 'none' : 'auto' }}
-                  onPointerDown={(e) => onDragStart(i, e)}
-                  onMouseDown={(e) => onDragStart(i, e)}
-                />
-              </g>
+              <circle
+                key={`pt${i}`}
+                cx={L + bw * i + bw * 0.5}
+                cy={Y(v)}
+                r={draggable ? (dragIdx === i ? 6 : 5) : 3.5}
+                fill={line.color || '#c98aa0'}
+                stroke="#fff"
+                strokeWidth="1.2"
+                style={{ cursor: draggable ? 'ns-resize' : 'default' }}
+                onPointerDown={(e) => onDragStart(i, e)}
+                onMouseDown={(e) => onDragStart(i, e)}
+              />
             );
           })}
         {markThisWeek && curIdx >= 0 && curIdx < n ? (
@@ -311,41 +261,42 @@ export default function SeriesChart({
               stroke="#f5a623"
               strokeWidth="1.5"
               strokeDasharray="4 3"
-              pointerEvents="none"
             />
-            <text
-              x={L + bw * curIdx + bw * 0.5}
-              y={T - 4}
-              textAnchor="middle"
-              fill="#f5a623"
-              style={{ fontSize: 9, fontWeight: 700 }}
-              pointerEvents="none"
-            >
+            <text x={L + bw * curIdx + bw * 0.5} y={T - 4} textAnchor="middle" fill="#f5a623" style={{ fontSize: 9, fontWeight: 700 }}>
               THIS WK
             </text>
           </>
         ) : null}
         {weeks.map((wk, i) =>
           i % 2 === 0 || i === n - 1 ? (
-            <text key={`x${i}`} className="al" x={L + bw * i + bw * 0.5} y={H - 7} textAnchor="middle" pointerEvents="none">
+            <text key={`x${i}`} className="al" x={L + bw * i + bw * 0.5} y={H - 7} textAnchor="middle">
               {wk}
             </text>
           ) : null,
         )}
+        {Array.from({ length: n }, (_, i) => (
+          <rect
+            key={`hit${i}`}
+            x={L + bw * i}
+            y={T}
+            width={bw}
+            height={Math.max(1, H - T - B)}
+            fill="transparent"
+            style={{ pointerEvents: canDrag ? 'none' : 'all' }}
+            onMouseEnter={() => setHoverI(i)}
+          />
+        ))}
       </svg>
-      {showTooltip && hoverIdx != null && tipLinesUnique.length ? (
+      {hoverTips.length ? (
         <div
           className="chart-tip"
-          role="tooltip"
-          data-testid="chart-tip"
-          style={{
-            left: `clamp(8px, calc(${tipLeftPct}% - 40px), calc(100% - 120px))`,
-          }}
+          style={{ left: `${((L + bw * hoverI + bw * 0.5) / W) * 100}%` }}
         >
-          <div className="chart-tip-wk">{weeks[hoverIdx] || `Week ${hoverIdx + 1}`}</div>
-          {tipLinesUnique.map((ln) => (
-            <div key={ln.label + ln.text} className="chart-tip-row">
-              {ln.text}
+          <div className="chart-tip-wk">{weeks[hoverI] || ''}</div>
+          {hoverTips.map((t, ti) => (
+            <div key={`${t.label}-${ti}`} className="chart-tip-row">
+              <i style={{ background: t.color }} />
+              {t.label}: {t.text}
             </div>
           ))}
         </div>
@@ -372,25 +323,122 @@ export default function SeriesChart({
   );
 }
 
-export function sparkMini({ values = [], color = '#2a78d6', width = 120, height = 28 }) {
-  const vals = values.filter((v) => v != null);
-  if (!vals.length) return null;
-  const mn = Math.min(...vals, 0);
-  const mx = Math.max(...vals, 0);
+export function SparkMini({
+  values = [],
+  weeks = [],
+  color = '#2a78d6',
+  width = 148,
+  height = 36,
+  markIdx = 0,
+  unit = '',
+  format = f2,
+  label = '',
+}) {
+  const [hoverI, setHoverI] = useState(null);
   const n = values.length;
-  const bw = width / n;
-  const Y = (v) => {
-    const span = mx - mn || 1;
-    return height - 2 - ((v - mn) / span) * (height - 4);
-  };
+  if (!n) return null;
+  const nums = values.map((v) => (v == null ? 0 : v));
+  const mn = Math.min(...nums, 0);
+  const mx = Math.max(...nums, 0);
+  const pad = 3;
+  const span = mx - mn || 1;
+  const step = n > 1 ? (width - 2) / (n - 1) : width;
+  const X = (i) => 1 + i * step;
+  const Y = (v) => height - pad - ((v - mn) / span) * (height - pad * 2);
+  const pts = nums.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`);
+  const path = pts.length ? `M ${pts.join(' L ')}` : '';
+  const hi = hoverI != null ? hoverI : null;
+  const tipVal = hi != null ? values[hi] : null;
+
   return (
-    <svg width={width} height={height} style={{ display: 'block' }}>
-      {values.map((v, i) =>
-        v == null ? null : (
-          <rect key={i} x={i * bw + 1} y={Math.min(Y(v), Y(0))} width={Math.max(1, bw - 2)} height={Math.max(1, Math.abs(Y(v) - Y(0)))} fill={color} rx="1" />
-        ),
-      )}
-    </svg>
+    <div className="spark-wrap">
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className="spark-svg"
+        onMouseLeave={() => setHoverI(null)}
+      >
+        {markIdx >= 0 && markIdx < n ? (
+          <line
+            x1={X(markIdx)}
+            y1={1}
+            x2={X(markIdx)}
+            y2={height - 1}
+            stroke="#f5a623"
+            strokeWidth="1"
+            strokeDasharray="2 2"
+          />
+        ) : null}
+        {path ? (
+          <path d={path} fill="none" stroke={color} strokeWidth="1.35" strokeLinejoin="round" strokeLinecap="round" />
+        ) : null}
+        {hi != null && tipVal != null ? (
+          <circle cx={X(hi)} cy={Y(tipVal)} r="2.6" fill={color} stroke="#fff" strokeWidth="1" />
+        ) : null}
+        {nums.map((_, i) => (
+          <rect
+            key={i}
+            x={Math.max(0, X(i) - step / 2)}
+            y={0}
+            width={Math.max(step, 6)}
+            height={height}
+            fill="transparent"
+            onMouseEnter={() => setHoverI(i)}
+          />
+        ))}
+      </svg>
+      {hi != null && tipVal != null ? (
+        <div className="chart-tip spark-tip" style={{ left: `${(X(hi) / width) * 100}%` }}>
+          <div className="chart-tip-wk">{weeks[hi] || `W${hi + 1}`}</div>
+          <div className="chart-tip-row">
+            <i style={{ background: color }} />
+            {label ? `${label}: ` : ''}
+            {format(tipVal)}
+            {unit ? ` ${unit}` : ''}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** @deprecated call SparkMini as a component; kept for existing `{sparkMini({...})}` sites. */
+export function sparkMini(props) {
+  return <SparkMini {...props} />;
+}
+
+export function KpiTrendCard({
+  heading,
+  value,
+  suffix = '',
+  caption,
+  color = '#2a78d6',
+  values = [],
+  weeks = [],
+  markIdx = 0,
+  unit = '',
+  tone = '',
+  format = f2,
+}) {
+  return (
+    <div className={`kpi-trend ${tone}`} style={{ '--kpi-accent': color }}>
+      {heading ? <span className="kpi-trend-h">{heading}</span> : null}
+      <b>
+        {format(value)}
+        {suffix}
+      </b>
+      <SparkMini
+        values={values}
+        weeks={weeks}
+        color={color}
+        markIdx={markIdx}
+        unit={unit}
+        format={format}
+        label={heading || caption}
+      />
+      {caption ? <span>{caption}</span> : null}
+    </div>
   );
 }
 

@@ -59,6 +59,8 @@ class RosterClassOut(BaseModel):
     status: str
     train_wk: int
     nest_wk: int
+    roster_file: str | None = None
+    employee_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -88,6 +90,7 @@ class PlanDetail(PlanSummary):
     avail_hrs: float
     weeks: list[WeekOut]
     headcount: HeadcountOut | None = None
+    headcount_last: HeadcountOut | None = None
     roster_classes: list[RosterClassOut] = Field(default_factory=list)
     # Optional series from demo meta (editable in Concierge)
     s_attr: list[float | None] = Field(default_factory=list)
@@ -98,6 +101,7 @@ class PlanDetail(PlanSummary):
     s_aht_goal: list[float | None] | None = None
     s_aht_act: list[float | None] | None = None
     hire12: float = 0.0
+    n_classes_12: int = 0
     ou_shrink: float | None = None
     f_bias: float | None = None
     a_bias: float | None = None

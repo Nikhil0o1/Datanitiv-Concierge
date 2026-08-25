@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { f2 } from '../utils/format';
-import { planRec, statusOf, weeks12 } from '../utils/planLogic';
-import SeriesChart, { sparkMini } from './SeriesChart';
+import { kpiTrends, ouColor, planRec, statusOf, weeks12 } from '../utils/planLogic';
+import SeriesChart, { KpiTrendCard } from './SeriesChart';
 
 function recShort(plan, gotBy) {
   const st = statusOf(plan);
@@ -29,46 +29,71 @@ function underOverBars(plan) {
 }
 
 function PlanExpandDetail({ plan, onOpenDetail }) {
-  const past = (plan.sOU || []).map((v, i) => (i <= plan.curIdx ? v : null));
-  const fu = (plan.sOU || []).map((v, i) => (i >= plan.curIdx ? v : null));
-  const shrF = (plan.sShrinkPlan || []).slice(plan.curIdx, plan.curIdx + 12);
-  const attrF = (plan.sAttrPlan || []).slice(plan.curIdx, plan.curIdx + 12);
-  const hireF = (plan.sHire || []).slice(plan.curIdx, plan.curIdx + 12);
+  const trends = kpiTrends(plan);
   const rc = recShort(plan);
+  const ouNow = plan.ouShrink ?? plan.sOU?.[plan.curIdx] ?? plan.ou ?? 0;
 
   return (
     <div className="land-detail" data-cap-detail={plan.capId}>
-      <div className="kpis">
-        <div className="kpi">
-          <b>{f2(plan.shrink12)}%</b>
-          <span>Shrinkage · 12wk</span>
-          <div style={{ marginTop: 4 }}>{sparkMini({ values: shrF, color: '#2a78d6' })}</div>
-        </div>
-        <div className="kpi">
-          <b>{f2(plan.attr12)}%</b>
-          <span>Attrition · 12wk</span>
-          <div style={{ marginTop: 4 }}>{sparkMini({ values: attrF, color: '#eb6834' })}</div>
-        </div>
-        <div className="kpi">
-          <b>{f2(plan.hire12)}</b>
-          <span>Hiring · 12wk</span>
-          <div style={{ marginTop: 4 }}>{sparkMini({ values: hireF, color: '#1a9e6a' })}</div>
-        </div>
-        <div className={`kpi ${(plan.ouShrink ?? plan.ou) < 0 ? 'neg' : 'pos'}`}>
-          <b>{f2(plan.ouShrink ?? plan.ou)}</b>
-          <span>O/U with shrinkage</span>
-          <div style={{ fontSize: '.65rem', color: 'var(--dim)', marginTop: 4 }}>vs billable {f2(plan.ou)}</div>
-        </div>
+      <div className="kpis trend-kpis">
+        <KpiTrendCard
+          heading="Shrinkage · 12wk"
+          value={plan.shrink12}
+          suffix="%"
+          caption="planned trend"
+          color="#2a78d6"
+          values={trends.shrink.values}
+          weeks={trends.shrink.weeks}
+          markIdx={trends.shrink.mark}
+          unit="%"
+        />
+        <KpiTrendCard
+          heading="Attrition · 12wk"
+          value={plan.attr12}
+          suffix="%"
+          caption="production, planned"
+          color="#eb6834"
+          values={trends.attr.values}
+          weeks={trends.attr.weeks}
+          markIdx={trends.attr.mark}
+          unit="%"
+        />
+        <KpiTrendCard
+          heading="Hiring · 12wk"
+          value={plan.hire12}
+          caption="planned new-hire HC"
+          color="#1a9e6a"
+          values={trends.hire.values}
+          weeks={trends.hire.weeks}
+          markIdx={trends.hire.mark}
+          unit="HC"
+        />
+        <KpiTrendCard
+          heading="O/U with shrinkage"
+          value={ouNow}
+          caption={`vs billable ${f2(plan.ou)}`}
+          color={ouNow < 0 ? '#e0483f' : '#1a9e6a'}
+          tone={ouNow < 0 ? 'neg' : 'pos'}
+          values={trends.ou.values}
+          weeks={trends.ou.weeks}
+          markIdx={trends.ou.mark}
+          unit="FTE"
+        />
       </div>
-      <div className="slabel">FTE Over / Under — week on week</div>
+      <div className="slabel">FTE over / under — week on week (this week marked)</div>
       <SeriesChart
         weeks={plan.weeks}
         curIdx={plan.curIdx}
         zeroLine
         height={180}
+        valueUnit="FTE"
         bars={[
-          { label: 'Actual/plan', data: past, color: (v) => (v < 0 ? '#e0483f' : '#1a9e6a') },
-          { label: 'Forecast', data: fu, color: (v) => (v < 0 ? '#f3b0ab' : '#a9dcc6') },
+          {
+            label: 'O/U',
+            tipLabel: 'O/U',
+            data: plan.sOU,
+            color: (v, i) => ouColor(v, i, plan.curIdx),
+          },
         ]}
       />
       <div className="land-detail-foot">
