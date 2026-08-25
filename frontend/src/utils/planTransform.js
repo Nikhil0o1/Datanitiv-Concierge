@@ -36,6 +36,9 @@ export function detailToDataRow(detail) {
   const n = weeks.length;
   const enrich = BY_CAP[detail.cap_id] || {};
   const apiCls =
+    detail.roster_classes?.find((c) => c.status === 'planned' && String(c.class_name || '').startsWith('EXEC-HIRE')) ||
+    detail.roster_classes?.find((c) => c.status === 'mapped' || c.status === 'uploaded') ||
+    detail.roster_classes?.find((c) => c.status === 'missing') ||
     detail.roster_classes?.[0] ||
     null;
   const enrichCls = enrich.cls || null;

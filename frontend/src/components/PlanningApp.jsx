@@ -15,7 +15,7 @@ import { filterPlans, matchesPlanSearch } from '../utils/planSearch';
 import ConciergeNudgePanel from './ConciergeNudgePanel';
 import PlanTabs, { TAB_LABELS, tabsForPlan } from './plan/PlanTabs';
 import PortfolioLanding from './PortfolioLanding';
-import { computeXutil, defaultOtWeekly, fwdCount } from '../utils/planLogic';
+import { computeXutil, defaultOtWeekly, fwdCount, hireTiming, planRec, scaleDonorsToXu } from '../utils/planLogic';
 
 const SHOW_SCENARIO_REPLAY = false;
 
@@ -227,7 +227,12 @@ export default function PlanningApp({ logoSrc }) {
         ...s,
         packages: (pkg || []).map((p) => {
           const prev = s.packages.find((x) => x.id === p.id);
-          return { ...p, ticked: prev?.ticked ?? false, done: prev?.done ?? false };
+          const posted = p.status === 'posted' || Boolean(p.staffing_applied);
+          return {
+            ...p,
+            ticked: posted ? false : (prev?.ticked ?? false),
+            done: posted || Boolean(prev?.done),
+          };
         }),
       }));
     } catch (e) {
@@ -542,20 +547,85 @@ export default function PlanningApp({ logoSrc }) {
     }
   }, [setState, refreshPortfolio]);
 
-  const handleAcceptRec = useCallback(() => {
+  const handleAcceptRec = useCallback(async () => {
     const capId = stateRef.current.activePlan;
-    setState((s) => ({
-      ...s,
-      doneRec: true,
-      packages: s.packages.map((p) =>
-        p.cap_id === capId && !p.done ? { ...p, ticked: true } : p,
-      ),
-    }));
-    setPlanDecisions((d) => ({
-      ...d,
-      [capId]: { ...(d[capId] || {}), rec: 'acc' },
-    }));
-  }, []);
+    const plan = data.find((p) => p.capId === capId);
+    if (!plan) return;
+
+    const ovr = planDecisions[capId]?.recOvr || {};
+    const xutil = computeXutil(data);
+    const rec = planRec(plan, {
+      otPct: ovr.otPct ?? 5,
+      xr: ovr.xr,
+      starts: ovr.starts,
+      gotBy: xutil.gotBy,
+    });
+    const donors = scaleDonorsToXu(xutil.donorsBy?.[capId] || [], rec.xr);
+    const timing = hireTiming(plan, ovr);
+    const n = fwdCount(plan);
+    const weeks = otWeeksByCap[capId];
+    const weekly = weeks?.length === n ? weeks : Array(n).fill(defaultOtWeekly(plan, rec.otPct));
+    const otHrs = Number(weekly[0]) || rec.otHrs;
+    const donorNote = donors.length
+      ? ` from ${donors.slice(0, 3).map((d) => d.cap_id).join(', ')}${donors.length > 3 ? '…' : ''}`
+      : '';
+    const hireNote =
+      rec.starts > 0
+        ? ` · hire ${rec.starts} (prod +${timing.productiveIn}wk)`
+        : ' · hire 0';
+
+    try {
+      const pkg = await api.upsertPackage({
+        cap_id: capId,
+        ot_hrs: otHrs,
+        ot_fte: rec.otFTE,
+        xu_fte: rec.xr,
+        hire_count: rec.starts,
+        train_wk: timing.trainWk,
+        nest_wk: timing.nestWk,
+        donors,
+        description: `OT ${otHrs.toFixed(2)} hrs/wk · loan ${Number(rec.xr).toFixed(2)} FTE${donorNote}${hireNote} · accepted`,
+      });
+      emit('recommend.accepted', {
+        metadata: {
+          cap_id: capId,
+          package_id: pkg?.id,
+          ot_hrs: otHrs,
+          ot_fte: rec.otFTE,
+          xu_fte: rec.xr,
+          hire_count: rec.starts,
+          train_wk: timing.trainWk,
+          nest_wk: timing.nestWk,
+          donors,
+        },
+      });
+      setState((s) => {
+        const mapped = { ...pkg, ticked: true, done: false };
+        const idx = s.packages.findIndex((p) => p.id === pkg.id);
+        let packages;
+        if (idx >= 0) {
+          packages = s.packages.map((p, i) => (i === idx ? mapped : p));
+        } else {
+          packages = [
+            ...s.packages.filter((p) => !(p.cap_id === capId && !p.done)),
+            mapped,
+          ];
+        }
+        return { ...s, doneRec: true, packages };
+      });
+      setPlanDecisions((d) => ({
+        ...d,
+        [capId]: { ...(d[capId] || {}), rec: 'acc' },
+      }));
+    } catch (e) {
+      emitError('recommend.accept.failed', e, { cap_id: capId });
+      console.error(e);
+      setState((s) => ({
+        ...s,
+        execMsg: e.message || 'Failed to queue package',
+      }));
+    }
+  }, [data, planDecisions, otWeeksByCap, setState]);
 
   const handleRejectRec = useCallback(() => {
     const capId = stateRef.current.activePlan;
@@ -631,11 +701,20 @@ export default function PlanningApp({ logoSrc }) {
     const ticked = stateRef.current.packages.filter((p) => p.ticked && !p.done);
     const ids = ticked.map((p) => p.id).filter(Boolean);
     let message = 'No packages selected.';
+    let ok = false;
     if (ids.length) {
       try {
         const res = await api.executeQueue(ids);
-        message = res?.message || `Posted ${ids.length} package(s) to CAP-ABILITY`;
-        emit('queue.executed', { metadata: { package_ids: ids, count: ids.length, success: true } });
+        message = res?.message || `Posted ${ids.length} package(s) · staffing applied`;
+        ok = true;
+        emit('queue.executed', {
+          metadata: {
+            package_ids: ids,
+            count: ids.length,
+            success: true,
+            applied: res?.applied,
+          },
+        });
       } catch (e) {
         emitError('queue.execute.failed', e, { package_ids: ids });
         console.error(e);
@@ -644,13 +723,15 @@ export default function PlanningApp({ logoSrc }) {
     }
     setState((s) => ({
       ...s,
-      execDone: ids.length > 0,
+      execDone: ok,
       execMsg: message,
-      packages: s.packages.map((p) =>
-        p.ticked ? { ...p, done: true, status: 'posted', ticked: false } : p,
-      ),
+      packages: ok
+        ? s.packages.map((p) =>
+            ids.includes(p.id) ? { ...p, done: true, status: 'posted', ticked: false } : p,
+          )
+        : s.packages,
     }));
-    refreshPortfolio();
+    if (ok) await refreshPortfolio();
     return { message };
   }, [setState, refreshPortfolio]);
 
@@ -659,34 +740,68 @@ export default function PlanningApp({ logoSrc }) {
     if (!stateRef.current.doneRec) {
       return { message: 'No approved package yet — accept a recommendation first.' };
     }
-    const match = stateRef.current.packages.find((p) => p.cap_id === capId && !p.done);
+    let match = stateRef.current.packages.find((p) => p.cap_id === capId && !p.done);
     if (!match?.id) {
-      setState((s) => ({
-        ...s,
-        execDone: true,
-        execMsg: `Local execute for ${capId} — no queued package id; marked complete in UI.`,
-      }));
-      return { message: `Local execute for ${capId}` };
+      // Accept may still be in flight or package missing — try upsert from live rec then execute.
+      const plan = data.find((p) => p.capId === capId);
+      if (!plan) {
+        return { message: `No plan loaded for ${capId}` };
+      }
+      try {
+        const ovr = planDecisions[capId]?.recOvr || {};
+        const xutil = computeXutil(data);
+        const rec = planRec(plan, {
+          otPct: ovr.otPct ?? 5,
+          xr: ovr.xr,
+          starts: ovr.starts,
+          gotBy: xutil.gotBy,
+        });
+        const donors = scaleDonorsToXu(xutil.donorsBy?.[capId] || [], rec.xr);
+        const timing = hireTiming(plan, ovr);
+        const n = fwdCount(plan);
+        const weeks = otWeeksByCap[capId];
+        const weekly = weeks?.length === n ? weeks : Array(n).fill(defaultOtWeekly(plan, rec.otPct));
+        const otHrs = Number(weekly[0]) || rec.otHrs;
+        match = await api.upsertPackage({
+          cap_id: capId,
+          ot_hrs: otHrs,
+          ot_fte: rec.otFTE,
+          xu_fte: rec.xr,
+          hire_count: rec.starts,
+          train_wk: timing.trainWk,
+          nest_wk: timing.nestWk,
+          donors,
+        });
+      } catch (e) {
+        console.error(e);
+        return { message: e.message || `No queued package for ${capId}` };
+      }
     }
     let message = '';
+    let ok = false;
     try {
       const res = await api.executeQueue([match.id]);
-      message = res?.message || `Posted 1 package to CAP-ABILITY`;
+      message = res?.message || `Posted 1 package · staffing applied`;
+      ok = true;
     } catch (e) {
       console.error(e);
       message = e.message || 'Execute failed';
     }
     setState((s) => ({
       ...s,
-      execDone: true,
+      execDone: ok,
       execMsg: message,
-      packages: s.packages.map((p) =>
-        p.cap_id === capId ? { ...p, done: true, status: 'posted', ticked: false } : p,
-      ),
+      packages: ok
+        ? s.packages.map((p) =>
+            p.id === match.id || p.cap_id === capId
+              ? { ...p, ...match, done: true, status: 'posted', ticked: false }
+              : p,
+          )
+        : s.packages,
     }));
-    refreshPortfolio();
+    if (ok) await refreshPortfolio();
     return { message };
-  }, [setState, refreshPortfolio]);
+  }, [data, planDecisions, otWeeksByCap, setState, refreshPortfolio]);
 
   domHandlersRef.current = {
     setFilter: (prog) => {

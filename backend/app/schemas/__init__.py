@@ -178,6 +178,12 @@ class PlanningCycleOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DonorLoan(BaseModel):
+    cap_id: str
+    fte: float
+    plan: str | None = None
+
+
 class ActionPackageOut(BaseModel):
     id: int
     cap_id: str
@@ -187,6 +193,12 @@ class ActionPackageOut(BaseModel):
     status: str
     description: str
     plan_name: str | None = None
+    staffing_applied: bool = False
+    applied_fte: float | None = None
+    donors: list[DonorLoan] = Field(default_factory=list)
+    train_wk: int = 2
+    nest_wk: int = 1
+    hire_lag_wk: int = 3
 
     model_config = {"from_attributes": True}
 
@@ -196,6 +208,20 @@ class ActionPackagePatch(BaseModel):
     ot_hrs: float | None = None
     xu_fte: float | None = None
     hire_count: int | None = None
+    train_wk: int | None = None
+    nest_wk: int | None = None
+
+
+class ActionPackageUpsert(BaseModel):
+    cap_id: str
+    ot_hrs: float = 0.0
+    ot_fte: float | None = None
+    xu_fte: float = 0.0
+    hire_count: int = 0
+    description: str | None = None
+    donors: list[DonorLoan] = Field(default_factory=list)
+    train_wk: int | None = None
+    nest_wk: int | None = None
 
 
 class ExecuteQueueRequest(BaseModel):
@@ -205,6 +231,7 @@ class ExecuteQueueRequest(BaseModel):
 class ExecuteQueueResponse(BaseModel):
     posted: list[int]
     message: str
+    applied: list[dict] = Field(default_factory=list)
 
 
 class LedgerEntryOut(BaseModel):

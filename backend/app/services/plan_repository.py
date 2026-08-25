@@ -355,10 +355,10 @@ def live_s_hire(plan: LoadedPlan) -> list[float | None]:
 
     for row in plan.roster_rows:
         status = (row.class_status or meta_cls.get("status") or "").lower()
-        mapped = status in ("mapped", "uploaded", "partial")
+        mapped = status in ("mapped", "uploaded", "partial", "planned")
         if not mapped:
             continue
-        hc = float(row.actual_hc or 0)
+        hc = float(row.actual_hc or row.plan_hc or 0)
         if hc <= 0:
             continue
         idx = _class_week_idx(plan, row, meta_cls)

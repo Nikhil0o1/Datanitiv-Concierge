@@ -73,7 +73,7 @@ export default function ShrinkageEditor({
                 type="range"
                 min="0"
                 max="70"
-                step="0.5"
+                step="0.05"
                 value={w.cur}
                 onChange={(e) => onChange(k, parseFloat(e.target.value), true)}
               />
@@ -81,8 +81,8 @@ export default function ShrinkageEditor({
                 type="number"
                 min="0"
                 max="70"
-                step="0.1"
-                value={w.cur.toFixed(1)}
+                step="0.05"
+                value={Number(w.cur).toFixed(2)}
                 onChange={(e) => onChange(k, parseFloat(e.target.value), true)}
               />
               <span className="rq" id={`rq${k}`}>

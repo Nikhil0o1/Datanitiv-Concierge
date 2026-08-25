@@ -136,17 +136,20 @@ export function shrRec(plan, livePlan = null) {
   return { actAvg, plan: planned, gap, dir, t };
 }
 
-/** Portfolio cross-util allocation (HTML computeXutil, simplified). */
+/** Portfolio cross-util allocation (HTML computeXutil, simplified).
+ *  Returns gotBy[capId], donorsBy[recipCapId]=[{cap_id, fte, plan}], and transfers[].
+ */
 export function computeXutil(plans) {
   const donors = plans
     .filter((p) => p.minOUfwd > 1 && !/FE Test/i.test(p.plan || ''))
     .map((p) => ({ p, lend: Math.round((p.minOUfwd - 1) * 100) / 100 }));
   const recips = plans
     .filter((p) => p.sustained < -0.5)
-    .map((p) => ({ p, need: Math.round(-p.sustained * 100) / 100, got: 0 }));
+    .map((p) => ({ p, need: Math.round(-p.sustained * 100) / 100, got: 0, donors: [] }));
   recips.sort((a, b) => b.need - a.need);
   donors.sort((a, b) => b.lend - a.lend);
 
+  const transfers = [];
   for (const r of recips) {
     let rem = r.need;
     for (const pass of [0, 1]) {
@@ -160,24 +163,81 @@ export function computeXutil(plans) {
         d.lend = Math.round((d.lend - amt) * 100) / 100;
         rem = Math.round((rem - amt) * 100) / 100;
         r.got = Math.round((r.got + amt) * 100) / 100;
+        const entry = { cap_id: d.p.capId, fte: amt, plan: d.p.plan || d.p.capId };
+        r.donors.push(entry);
+        transfers.push({
+          from: d.p.capId,
+          to: r.p.capId,
+          fte: amt,
+        });
       }
     }
   }
   const gotBy = {};
+  const donorsBy = {};
   recips.forEach((r) => {
     gotBy[r.p.capId] = r.got;
+    donorsBy[r.p.capId] = r.donors;
   });
-  return { gotBy };
+  return { gotBy, donorsBy, transfers };
 }
 
-export function planRec(plan, { otPct = 5, xr, starts, gotBy } = {}) {
+/** Scale (or trim) donor list so FTE sums to targetXu. */
+export function scaleDonorsToXu(donors, targetXu) {
+  const xu = Math.round((Number(targetXu) || 0) * 100) / 100;
+  if (xu <= 0.01 || !donors?.length) return [];
+  const sum = donors.reduce((a, d) => a + (Number(d.fte) || 0), 0);
+  if (sum <= 0.01) return [];
+  const scale = xu / sum;
+  const out = donors
+    .map((d) => ({
+      cap_id: d.cap_id,
+      fte: Math.round((Number(d.fte) || 0) * scale * 100) / 100,
+      plan: d.plan || d.cap_id,
+    }))
+    .filter((d) => d.fte > 0.01);
+  // Fix rounding drift on the largest donor
+  const got = out.reduce((a, d) => a + d.fte, 0);
+  const drift = Math.round((xu - got) * 100) / 100;
+  if (out.length && Math.abs(drift) >= 0.01) {
+    out[0].fte = Math.round((out[0].fte + drift) * 100) / 100;
+  }
+  return out;
+}
+
+/** Dynamic hire train/nest timing from plan class / defaults. */
+export function hireTiming(plan, ovr = {}) {
+  const trainWk = Math.max(
+    0,
+    parseInt(ovr.trainWk ?? plan?.cls?.trainWk ?? plan?.trainWk ?? 2, 10) || 0,
+  );
+  const nestWk = Math.max(
+    0,
+    parseInt(ovr.nestWk ?? plan?.cls?.nestWk ?? plan?.nestWk ?? 1, 10) || 0,
+  );
+  return { trainWk, nestWk, productiveIn: trainWk + nestWk };
+}
+
+export function planRec(plan, { otPct = 5, xr, starts, gotBy, trainWk, nestWk } = {}) {
   const gap = Math.max(0, -plan.sustained);
   const otFTE = Math.round(((otPct / 100) * (plan.closingFTE || 0)) * 100) / 100;
   const otHrs = Math.round(((otPct / 100) * (plan.closingFTE || 0) * (plan.availHrs || 40)) * 100) / 100;
   const cross = xr != null ? xr : gotBy?.[plan.capId] || 0;
   const residual = Math.round(Math.max(0, gap - cross - otFTE) * 100) / 100;
   const hireStarts = starts != null ? starts : residual > 0 ? Math.ceil(residual / (0.97 * 0.98 * 0.99)) : 0;
-  return { gap, otPct, otFTE, otHrs, xr: cross, residual, starts: hireStarts };
+  const timing = hireTiming(plan, { trainWk, nestWk });
+  return {
+    gap,
+    otPct,
+    otFTE,
+    otHrs,
+    xr: cross,
+    residual,
+    starts: hireStarts,
+    trainWk: timing.trainWk,
+    nestWk: timing.nestWk,
+    productiveIn: timing.productiveIn,
+  };
 }
 
 export function fwdCount(plan) {

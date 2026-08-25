@@ -545,7 +545,7 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
 
   const className = cls.name || cls.className || `TC_2026_${String(plan.capId || '').replace(/\D/g, '')}`;
   const status = String(cls.status || 'missing').toLowerCase();
-  const mapped = status === 'mapped' || status === 'uploaded' || status === 'partial';
+  const mapped = status === 'mapped' || status === 'uploaded' || status === 'partial' || status === 'planned';
   const uploaded = status === 'uploaded' && (cls.rosterFile || cls.employeeCount > 0);
   const planHc = Number(cls.plan) || 0;
   const trainHc = Number(cls.trainHC) || planHc;
@@ -553,7 +553,16 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
   const coverageGap = Math.abs(plan.sustained || 0);
   const previewGap = Math.max(0, coverageGap - trainHc);
   const liveGap = coverageGap;
-  const stLabel = uploaded ? '✓ Uploaded' : mapped ? '✓ Mapped' : status === 'partial' ? '◑ Partial' : '✕ Not uploaded';
+  const stLabel =
+    status === 'planned'
+      ? '◷ Planned (from Execute)'
+      : uploaded
+        ? '✓ Uploaded'
+        : mapped
+          ? '✓ Mapped'
+          : status === 'partial'
+            ? '◑ Partial'
+            : '✕ Not uploaded';
 
   const mapPayload = (extra = {}) => ({
     cap_id: plan.capId,
@@ -871,11 +880,12 @@ function ShrinkageTab({
           curIdx={plan.curIdx}
           height={200}
           yFmt={(v) => `${Math.round(v)}%`}
+          tooltipUnit="%"
           bars={[{ label: 'Actual', data: past, color: '#2a78d6' }]}
           line={{ label: 'Plan', data: displayLine, color: '#c98aa0' }}
           dragFromIdx={plan.curIdx}
           dragUntilIdx={dragUntilIdx}
-          snap={0.5}
+          snap={0.05}
           minV={0}
           maxV={70}
           dragHint="↕ Drag plan points for this week through the next 12 (same weeks as the sliders)"
@@ -1096,7 +1106,14 @@ function RecommendTab({
   const w = weeks12(plan);
   const [showMod, setShowMod] = useState(false);
   const ovr = decisions?.recOvr || {};
-  const rec = planRec(plan, { otPct: ovr.otPct ?? 5, xr: ovr.xr, starts: ovr.starts, gotBy });
+  const rec = planRec(plan, {
+    otPct: ovr.otPct ?? 5,
+    xr: ovr.xr,
+    starts: ovr.starts,
+    trainWk: ovr.trainWk,
+    nestWk: ovr.nestWk,
+    gotBy,
+  });
   const decision = decisions?.rec;
   const n = fwdCount(plan);
   const weekly = otWeeks?.length === n ? otWeeks : Array(n).fill(defaultOtWeekly(plan, rec.otPct));
@@ -1124,7 +1141,12 @@ function RecommendTab({
             <span>−{f2(rec.xr)} FTE</span>
           </div>
           <div className="mline">
-            <span>③ Hire starts</span>
+            <span>
+              ③ Hire starts
+              {rec.starts > 0
+                ? ` · productive in +${rec.productiveIn} wk (train ${rec.trainWk} + nest ${rec.nestWk})`
+                : ''}
+            </span>
             <span>{rec.starts}</span>
           </div>
           <div className="mline">
@@ -1224,6 +1246,26 @@ function RecommendTab({
                 onChange={(e) => onRecOverride?.({ starts: parseInt(e.target.value, 10) || 0 })}
               />
             </label>
+            <label>
+              Train wk
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={ovr.trainWk ?? rec.trainWk}
+                onChange={(e) => onRecOverride?.({ trainWk: parseInt(e.target.value, 10) || 0 })}
+              />
+            </label>
+            <label>
+              Nest wk
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={ovr.nestWk ?? rec.nestWk}
+                onChange={(e) => onRecOverride?.({ nestWk: parseInt(e.target.value, 10) || 0 })}
+              />
+            </label>
           </div>
         ) : null}
         {showDecide ? (
@@ -1246,7 +1288,8 @@ function RecommendTab({
         <div className={`done ${doneRec ? 'on' : ''}`} id="doneRec">
           <span>✓</span>
           <span>
-            Package accepted · OT {f2(otTotal)} hrs · cross-util {f2(rec.xr)} · hire {rec.starts} · queued
+            Package accepted · OT {f2(otTotal)} hrs · cross-util {f2(rec.xr)} · hire {rec.starts}
+            {rec.starts > 0 ? ` (prod +${rec.productiveIn}wk)` : ''} · queued
           </span>
         </div>
       </div>
