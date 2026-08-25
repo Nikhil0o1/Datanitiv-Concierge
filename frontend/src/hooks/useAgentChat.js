@@ -145,6 +145,12 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanA
         metadata: { source, cap_id: st.activePlan, view: st.view, filter: st.filter },
       });
 
+      const chatMessage =
+        trimmed ||
+        (rosterMeta
+          ? `I attached ${rosterMeta.filename} (${rosterMeta.employee_count} employees, ${f2(rosterMeta.total_fte)} FTE).`
+          : '');
+
       try {
         const chat = await api.agentChat(chatMessage, st.activePlan, {
           view: st.view,

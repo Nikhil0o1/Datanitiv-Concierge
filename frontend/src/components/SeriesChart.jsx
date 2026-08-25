@@ -1,5 +1,33 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { f1 } from '../utils/format';
+import { f1, f2 } from '../utils/format';
+
+function seriesColor(series, v, i) {
+  if (!series) return '#2a78d6';
+  return typeof series.color === 'function' ? series.color(v, i) : series.color || '#2a78d6';
+}
+
+function hoverItems(bars, line, i, yFmt, valueUnit) {
+  const unit = valueUnit ? ` ${valueUnit}` : '';
+  const items = [];
+  (bars || []).forEach((series) => {
+    const v = series.data?.[i];
+    if (v == null) return;
+    items.push({
+      label: series.tipLabel || series.label || 'O/U',
+      text: `${yFmt(v)}${unit}`,
+      color: seriesColor(series, v, i),
+    });
+  });
+  const lv = line?.data?.[i];
+  if (lv != null) {
+    items.push({
+      label: line.tipLabel || line.label || 'Plan',
+      text: `${yFmt(lv)}${unit}`,
+      color: line.color || '#c98aa0',
+    });
+  }
+  return items;
+}
 
 /** Generic SVG bar (+ optional draggable line) series chart. */
 export default function SeriesChart({
@@ -13,10 +41,14 @@ export default function SeriesChart({
   zeroLine = false,
   /** Allow dragging line points from this index (usually curIdx). */
   dragFromIdx = null,
+  dragUntilIdx = null,
   onDragPoint = null,
   snap = 0.5,
   minV = 0,
   maxV = 95,
+  valueUnit = '',
+  thinBars = true,
+  dragHint = null,
 }) {
   const svgRef = useRef(null);
   const dragIdxRef = useRef(null);
@@ -82,6 +114,7 @@ export default function SeriesChart({
 
   const onDragStart = (i, e) => {
     if (dragFromIdx == null || i < dragFromIdx || !onDragRef.current) return;
+    if (dragUntilIdx != null && i > dragUntilIdx) return;
     if (typeof e.button === 'number' && e.button !== 0) return;
     // pointerdown + mousedown both fire in some browsers — only start once
     if (dragIdxRef.current != null) return;
@@ -111,9 +144,13 @@ export default function SeriesChart({
     window.addEventListener('pointercancel', up);
   };
 
+  const [hoverI, setHoverI] = useState(null);
+
   if (!n || !layout) return null;
   const { W, H, L, R, T, B, lo, Y, bw, zy } = layout;
   const canDrag = dragFromIdx != null && typeof onDragPoint === 'function';
+  const barW = thinBars ? Math.max(2.2, Math.min(4.2, bw * 0.18)) : bw * 0.56;
+  const hoverTips = hoverI == null ? [] : hoverItems(bars, line, hoverI, yFmt, valueUnit);
 
   const grid = [];
   for (let t = 0; t <= 4; t++) {
@@ -138,16 +175,17 @@ export default function SeriesChart({
   }
 
   return (
-    <div className={`chart on ${canDrag ? 'draggable-chart' : ''}`} style={{ marginTop: 8 }}>
+    <div className={`chart on ${canDrag ? 'draggable-chart' : ''}`} style={{ marginTop: 8, position: 'relative' }}>
       {canDrag ? (
         <div className="dragnote" style={{ marginBottom: 4 }}>
-          ↕ Drag the plan points for any future week (snaps to {snap})
+          {dragHint || `↕ Drag the plan points for any future week (snaps to ${snap})`}
         </div>
       ) : null}
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         style={{ touchAction: canDrag ? 'none' : undefined, cursor: dragIdx != null ? 'ns-resize' : undefined }}
+        onMouseLeave={() => setHoverI(null)}
       >
         {grid}
         {zeroLine ? <line className="zl" x1={L} y1={zy} x2={W - R} y2={zy} /> : null}
@@ -155,16 +193,38 @@ export default function SeriesChart({
           (series.data || []).map((v, i) => {
             if (v == null) return null;
             const color = typeof series.color === 'function' ? series.color(v, i) : series.color || '#2a78d6';
-            const bx = L + bw * i + bw * 0.22;
-            const w = bw * 0.56;
+            const bx = L + bw * i + bw * 0.5 - barW / 2;
+            const dim = hoverI != null && hoverI !== i;
             if (zeroLine) {
               const y = v >= 0 ? Y(v) : zy;
               const h = Math.max(1.5, Math.abs(Y(v) - zy));
-              return <rect key={`${si}-${i}`} x={bx} y={y} width={w} height={h} rx="2.5" fill={color} />;
+              return (
+                <rect
+                  key={`${si}-${i}`}
+                  x={bx}
+                  y={y}
+                  width={barW}
+                  height={h}
+                  rx={barW / 2}
+                  fill={color}
+                  opacity={dim ? 0.38 : hoverI === i ? 1 : 0.92}
+                />
+              );
             }
             const y = Y(v);
             const h = Math.max(1.5, Y(lo) - y);
-            return <rect key={`${si}-${i}`} x={bx} y={y} width={w} height={h} rx="2.5" fill={color} />;
+            return (
+              <rect
+                key={`${si}-${i}`}
+                x={bx}
+                y={y}
+                width={barW}
+                height={h}
+                rx={barW / 2}
+                fill={color}
+                opacity={dim ? 0.38 : hoverI === i ? 1 : 0.92}
+              />
+            );
           }),
         )}
         {linePath ? (
@@ -175,7 +235,7 @@ export default function SeriesChart({
             if (v == null) return null;
             const forward = i >= curIdx;
             if (!forward && dragFromIdx != null) return null;
-            const draggable = canDrag && i >= dragFromIdx;
+            const draggable = canDrag && i >= dragFromIdx && (dragUntilIdx == null || i <= dragUntilIdx);
             return (
               <circle
                 key={`pt${i}`}
@@ -214,7 +274,33 @@ export default function SeriesChart({
             </text>
           ) : null,
         )}
+        {Array.from({ length: n }, (_, i) => (
+          <rect
+            key={`hit${i}`}
+            x={L + bw * i}
+            y={T}
+            width={bw}
+            height={Math.max(1, H - T - B)}
+            fill="transparent"
+            style={{ pointerEvents: canDrag ? 'none' : 'all' }}
+            onMouseEnter={() => setHoverI(i)}
+          />
+        ))}
       </svg>
+      {hoverTips.length ? (
+        <div
+          className="chart-tip"
+          style={{ left: `${((L + bw * hoverI + bw * 0.5) / W) * 100}%` }}
+        >
+          <div className="chart-tip-wk">{weeks[hoverI] || ''}</div>
+          {hoverTips.map((t, ti) => (
+            <div key={`${t.label}-${ti}`} className="chart-tip-row">
+              <i style={{ background: t.color }} />
+              {t.label}: {t.text}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {bars.some((b) => b.label) || line?.label ? (
         <div className="lgd" style={{ marginTop: 6 }}>
           {bars.map((b) =>
@@ -237,25 +323,122 @@ export default function SeriesChart({
   );
 }
 
-export function sparkMini({ values = [], color = '#2a78d6', width = 120, height = 28 }) {
-  const vals = values.filter((v) => v != null);
-  if (!vals.length) return null;
-  const mn = Math.min(...vals, 0);
-  const mx = Math.max(...vals, 0);
+export function SparkMini({
+  values = [],
+  weeks = [],
+  color = '#2a78d6',
+  width = 148,
+  height = 36,
+  markIdx = 0,
+  unit = '',
+  format = f2,
+  label = '',
+}) {
+  const [hoverI, setHoverI] = useState(null);
   const n = values.length;
-  const bw = width / n;
-  const Y = (v) => {
-    const span = mx - mn || 1;
-    return height - 2 - ((v - mn) / span) * (height - 4);
-  };
+  if (!n) return null;
+  const nums = values.map((v) => (v == null ? 0 : v));
+  const mn = Math.min(...nums, 0);
+  const mx = Math.max(...nums, 0);
+  const pad = 3;
+  const span = mx - mn || 1;
+  const step = n > 1 ? (width - 2) / (n - 1) : width;
+  const X = (i) => 1 + i * step;
+  const Y = (v) => height - pad - ((v - mn) / span) * (height - pad * 2);
+  const pts = nums.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`);
+  const path = pts.length ? `M ${pts.join(' L ')}` : '';
+  const hi = hoverI != null ? hoverI : null;
+  const tipVal = hi != null ? values[hi] : null;
+
   return (
-    <svg width={width} height={height} style={{ display: 'block' }}>
-      {values.map((v, i) =>
-        v == null ? null : (
-          <rect key={i} x={i * bw + 1} y={Math.min(Y(v), Y(0))} width={Math.max(1, bw - 2)} height={Math.max(1, Math.abs(Y(v) - Y(0)))} fill={color} rx="1" />
-        ),
-      )}
-    </svg>
+    <div className="spark-wrap">
+      <svg
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        className="spark-svg"
+        onMouseLeave={() => setHoverI(null)}
+      >
+        {markIdx >= 0 && markIdx < n ? (
+          <line
+            x1={X(markIdx)}
+            y1={1}
+            x2={X(markIdx)}
+            y2={height - 1}
+            stroke="#f5a623"
+            strokeWidth="1"
+            strokeDasharray="2 2"
+          />
+        ) : null}
+        {path ? (
+          <path d={path} fill="none" stroke={color} strokeWidth="1.35" strokeLinejoin="round" strokeLinecap="round" />
+        ) : null}
+        {hi != null && tipVal != null ? (
+          <circle cx={X(hi)} cy={Y(tipVal)} r="2.6" fill={color} stroke="#fff" strokeWidth="1" />
+        ) : null}
+        {nums.map((_, i) => (
+          <rect
+            key={i}
+            x={Math.max(0, X(i) - step / 2)}
+            y={0}
+            width={Math.max(step, 6)}
+            height={height}
+            fill="transparent"
+            onMouseEnter={() => setHoverI(i)}
+          />
+        ))}
+      </svg>
+      {hi != null && tipVal != null ? (
+        <div className="chart-tip spark-tip" style={{ left: `${(X(hi) / width) * 100}%` }}>
+          <div className="chart-tip-wk">{weeks[hi] || `W${hi + 1}`}</div>
+          <div className="chart-tip-row">
+            <i style={{ background: color }} />
+            {label ? `${label}: ` : ''}
+            {format(tipVal)}
+            {unit ? ` ${unit}` : ''}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** @deprecated call SparkMini as a component; kept for existing `{sparkMini({...})}` sites. */
+export function sparkMini(props) {
+  return <SparkMini {...props} />;
+}
+
+export function KpiTrendCard({
+  heading,
+  value,
+  suffix = '',
+  caption,
+  color = '#2a78d6',
+  values = [],
+  weeks = [],
+  markIdx = 0,
+  unit = '',
+  tone = '',
+  format = f2,
+}) {
+  return (
+    <div className={`kpi-trend ${tone}`} style={{ '--kpi-accent': color }}>
+      {heading ? <span className="kpi-trend-h">{heading}</span> : null}
+      <b>
+        {format(value)}
+        {suffix}
+      </b>
+      <SparkMini
+        values={values}
+        weeks={weeks}
+        color={color}
+        markIdx={markIdx}
+        unit={unit}
+        format={format}
+        label={heading || caption}
+      />
+      {caption ? <span>{caption}</span> : null}
+    </div>
   );
 }
 

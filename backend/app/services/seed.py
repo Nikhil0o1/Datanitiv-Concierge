@@ -39,9 +39,10 @@ from app.services.demo_store import (
     DEMO_TIME_LEDGER,
     set_json_setting,
 )
-from app.services.plan_repository import cap_to_cp, week_dates_from_labels
+from app.services.plan_repository import cap_to_cp, compute_closing_fte, week_dates_from_labels
 
 PROTOTYPE_PATH = Path(__file__).resolve().parents[3] / "prototype.html"
+ENRICHMENT_PATH = Path(__file__).resolve().parents[3] / "frontend" / "src" / "data" / "htmlPlanEnrichment.json"
 NOW = datetime.now(timezone.utc)
 
 TITLE_TRANSLATIONS = [
@@ -63,6 +64,16 @@ def parse_prototype_data(html_path: Path | None = None) -> list[dict]:
     if not match:
         raise ValueError(f"Could not find DATA array in {path}")
     return json.loads(match.group(1))
+
+
+def _enrichment_map() -> dict[str, dict]:
+    if not ENRICHMENT_PATH.exists():
+        return {}
+    try:
+        rows = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {row["capId"]: row for row in rows if row.get("capId")}
 
 
 def _class_name(cap_id: str) -> str:
@@ -101,6 +112,46 @@ def _parse_cls_date(label: str, year: int = 2026) -> date | None:
     return None
 
 
+def _normalize_hc(hc_meta: dict | None) -> dict | None:
+    if not hc_meta:
+        return None
+    hc = {
+        "opening": float(hc_meta.get("opening") or 0),
+        "nest": float(hc_meta.get("nest") or 0),
+        "tin": float(hc_meta.get("tin") or 0),
+        "tout": float(hc_meta.get("tout") or 0),
+        "loaIn": float(hc_meta.get("loaIn") or hc_meta.get("loa_in") or 0),
+        "loaOut": float(hc_meta.get("loaOut") or hc_meta.get("loa_out") or 0),
+        "attr": float(hc_meta.get("attr") or 0),
+        "promo": float(hc_meta.get("promo") or 0),
+        "closing": 0.0,
+    }
+    hc["closing"] = compute_closing_fte(hc)
+    return hc
+
+
+def _add_hc_rows(session, *, cp_plan_id: int, week_date, hc: dict, scope: dict) -> None:
+    for ref_code, value in hc.items():
+        session.add(
+            OneviewHeaderDetails(
+                cp_plan_id=cp_plan_id,
+                dataset_type="Headcount",
+                date=week_date,
+                ref_code=ref_code,
+                kpi_group="Headcount",
+                type="Headcount",
+                sub_type=ref_code,
+                title=ref_code,
+                title_type="Actual",
+                unit="FTE",
+                value=float(value),
+                is_billable=True,
+                last_updated_on_utc=NOW.replace(tzinfo=None),
+                **scope,
+            )
+        )
+
+
 def _roster_id(cp_plan_id: int) -> int:
     return 10_000 + cp_plan_id
 
@@ -110,6 +161,7 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
         return {"skipped": True}
 
     data = parse_prototype_data(html_path)
+    enrichment = _enrichment_map()
     counts: dict[str, int] = {}
 
     for tid, actual, display, source, col_type in TITLE_TRANSLATIONS:
@@ -130,6 +182,7 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
 
     for row in data:
         cap_id = row["capId"]
+        extra = enrichment.get(cap_id) or {}
         cp_plan_id = cap_to_cp(cap_id)
         weeks = row.get("weeks") or []
         dates = week_dates_from_labels(weeks) if weeks else []
@@ -139,6 +192,11 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
         billable = 50.0
         map_id = cp_plan_id
         activity_id = cp_plan_id
+        hc_cur = _normalize_hc(row.get("hcCur") or extra.get("hcCur"))
+        hc_last = _normalize_hc(extra.get("hcLast"))
+        seed_close = float(row.get("closingFTE") or (hc_cur or {}).get("closing") or 0)
+        computed_close = float((hc_cur or {}).get("closing") or seed_close)
+        proj_delta = round(computed_close - seed_close, 2) if hc_cur else 0.0
 
         session.add(
             OneviewHierarchy(
@@ -189,6 +247,10 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
         s_req = row.get("sReq") or []
         s_shrink = row.get("sShrink") or []
         s_shrink_plan = row.get("sShrinkPlan") or []
+        ou_now = round(float(s_ou[cur_idx] if cur_idx < len(s_ou) else row.get("ou", 0)) + proj_delta, 2)
+        fwd_ou = [round(float(s_ou[i] or 0) + proj_delta, 2) for i in range(cur_idx, min(len(s_ou), cur_idx + 12))]
+        sustained_live = round(sum(fwd_ou) / len(fwd_ou), 2) if fwd_ou else float(row.get("sustained", 0))
+        min_ou_live = round(min(fwd_ou), 2) if fwd_ou else float(row.get("minOUfwd", 0))
 
         for idx, week_date in enumerate(dates):
             for kpi_key, series in (
@@ -197,6 +259,8 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
                 ("Billable_FTE_Required", s_req),
             ):
                 value = float(series[idx] if idx < len(series) else 0.0)
+                if proj_delta and idx >= cur_idx and kpi_key in ("FTE_Over_Under", "Billable_FTE_Projected"):
+                    value = round(value + proj_delta, 2)
                 session.add(
                     OneviewPlannerDataset(
                         cp_plan_id=cp_plan_id,
@@ -234,35 +298,21 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
                 )
 
         if cur_date:
-            hc = row.get("hcCur") or {}
-            for ref_code, value in hc.items():
-                session.add(
-                    OneviewHeaderDetails(
-                        cp_plan_id=cp_plan_id,
-                        dataset_type="Headcount",
-                        date=cur_date,
-                        ref_code=ref_code,
-                        kpi_group="Headcount",
-                        type="Headcount",
-                        sub_type=ref_code,
-                        title=ref_code,
-                        title_type="Actual",
-                        unit="FTE",
-                        value=float(value),
-                        is_billable=True,
-                        last_updated_on_utc=NOW.replace(tzinfo=None),
-                        **scope,
-                    )
-                )
+            hc = hc_cur or {}
+            if hc:
+                _add_hc_rows(session, cp_plan_id=cp_plan_id, week_date=cur_date, hc=hc, scope=scope)
+            prev_date = dates[cur_idx - 1] if dates and cur_idx > 0 else None
+            if prev_date and hc_last:
+                _add_hc_rows(session, cp_plan_id=cp_plan_id, week_date=prev_date, hc=hc_last, scope=scope)
 
             for ref_code, value, unit in (
-                ("ou", row.get("ou", 0), "FTE"),
-                ("sustained", row.get("sustained", 0), "FTE"),
-                ("minOUfwd", row.get("minOUfwd", 0), "FTE"),
-                ("closingFTE", row.get("closingFTE", 0), "FTE"),
+                ("ou", ou_now, "FTE"),
+                ("sustained", sustained_live, "FTE"),
+                ("minOUfwd", min_ou_live, "FTE"),
+                ("closingFTE", computed_close, "FTE"),
                 ("shrink12", row.get("shrink12", 0), "Pct"),
-                ("attr12", row.get("attr12", 0), "Pct"),
-                ("availHrs", row.get("availHrs", 40), "Hours"),
+                ("attr12", extra.get("attr12", row.get("attr12", 0)), "Pct"),
+                ("availHrs", extra.get("availHrs", row.get("availHrs", 40)), "Hours"),
             ):
                 session.add(
                     OneviewHeaderDetails(
@@ -289,7 +339,7 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
                     ref_code="closing_fte",
                     title="Closing FTE",
                     date=cur_date,
-                    value=float(row.get("closingFTE", 0)),
+                    value=float(computed_close),
                     unit="FTE",
                 )
             )
@@ -300,7 +350,7 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
                     ref_code="sustained_ou",
                     title="Sustained O/U",
                     date=cur_date,
-                    value=float(row.get("sustained", 0)),
+                    value=float(sustained_live),
                     unit="FTE",
                 )
             )
@@ -406,16 +456,18 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
             )
             session.add(OneviewRosterRole(cp_roster_id=roster_id, role="Agent"))
 
+        extra = enrichment.get(cap_id) or {}
         plan_meta[cap_id] = {
             "weeks": weeks,
             "curIdx": cur_idx,
-            "ou": row.get("ou", 0),
-            "sustained": row.get("sustained", 0),
-            "minOUfwd": row.get("minOUfwd", 0),
-            "closingFTE": row.get("closingFTE", 0),
+            "ou": ou_now,
+            "sustained": sustained_live,
+            "minOUfwd": min_ou_live,
+            "closingFTE": computed_close,
             "availHrs": row.get("availHrs", 40),
             "shrink12": row.get("shrink12", 0),
-            "attr12": row.get("attr12", 0),
+            "attr12": extra.get("attr12", row.get("attr12", 0)),
+            "hire12": extra.get("hire12", 0),
             "billable": billable,
             "isVol": row.get("isVol", False),
             "region": row.get("region", ""),
@@ -424,8 +476,17 @@ async def seed_database(session: AsyncSession, html_path: Path | None = None) ->
             "lob": row["lob"],
             "planner": row.get("planner", ""),
             "vertical": row.get("vertical", ""),
-            "hcCur": row.get("hcCur"),
+            "hcCur": hc_cur,
+            "hcLast": hc_last,
             "cls": cls,
+            "sAttr": extra.get("sAttr"),
+            "sAttrPlan": extra.get("sAttrPlan"),
+            "sHire": extra.get("sHire"),
+            "sFcst": extra.get("sFcst"),
+            "sActVol": extra.get("sActVol"),
+            "sAhtGoal": extra.get("sAhtGoal"),
+            "sAhtAct": extra.get("sAhtAct"),
+            "ouShrink": extra.get("ouShrink", ou_now) if extra.get("ouShrink") is None else round(float(extra.get("ouShrink")) + proj_delta, 2),
         }
 
     counts["oneview_hierarchy"] = len(data)

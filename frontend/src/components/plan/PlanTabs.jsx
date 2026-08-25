@@ -4,6 +4,11 @@ import {
   computeXutil,
   defaultOtWeekly,
   fwdCount,
+  computeClosing,
+  applyLiveShrinkage,
+  applyLiveAttrition,
+  kpiTrends,
+  ouColor,
   planRec,
   segmentShrinkage,
   shrRec,
@@ -11,7 +16,7 @@ import {
   weeks12,
 } from '../../utils/planLogic';
 import { readRosterFile } from '../../utils/rosterCsv';
-import SeriesChart, { DecisionBar, sparkMini } from '../SeriesChart';
+import SeriesChart, { DecisionBar, KpiTrendCard, sparkMini } from '../SeriesChart';
 import ShrinkageEditor from '../ShrinkageEditor';
 
 const SEG_COLORS = {
@@ -42,12 +47,8 @@ export function tabsForPlan(plan) {
 }
 
 function OverviewTab({ plan }) {
-  const fut = (s) => (s || []).slice(plan.curIdx, plan.curIdx + 12);
-  const shrF = fut(plan.sShrinkPlan);
-  const attrF = fut(plan.sAttrPlan);
-  const hireF = fut(plan.sHire);
-  const past = (plan.sOU || []).map((v, i) => (i <= plan.curIdx ? v : null));
-  const fu = (plan.sOU || []).map((v, i) => (i >= plan.curIdx ? v : null));
+  const trends = kpiTrends(plan);
+  const ouNow = plan.ouShrink ?? plan.sOU?.[plan.curIdx] ?? plan.ou ?? 0;
 
   return (
     <div className="tsec on" data-sec="ov">
@@ -56,46 +57,64 @@ function OverviewTab({ plan }) {
           <b>Plan overview</b>
           <span className="tag">step 1</span>
         </div>
-        <div className="kpis">
-          <div className="kpi">
-            <b>{f2(plan.shrink12)}%</b>
-            <span>Shrinkage · 12wk</span>
-            <div style={{ marginTop: 4 }}>{sparkMini({ values: shrF, color: '#2a78d6' })}</div>
-          </div>
-          <div className="kpi">
-            <b>{f2(plan.attr12)}%</b>
-            <span>Attrition · 12wk</span>
-            <div style={{ marginTop: 4 }}>{sparkMini({ values: attrF, color: '#eb6834' })}</div>
-          </div>
-          <div className="kpi">
-            <b>{f2(plan.hire12)}</b>
-            <span>Hiring · 12wk</span>
-            <div style={{ marginTop: 4 }}>{sparkMini({ values: hireF, color: '#1a9e6a' })}</div>
-          </div>
-          <div className={`kpi ${(plan.ouShrink ?? plan.ou) < 0 ? 'neg' : 'pos'}`}>
-            <b>{f2(plan.ouShrink ?? plan.ou)}</b>
-            <span>O/U with shrinkage</span>
-            <div className="s" style={{ fontSize: '.65rem', color: 'var(--dim)', marginTop: 4 }}>
-              vs billable {f2(plan.ou)}
-            </div>
-          </div>
+        <div className="kpis trend-kpis">
+          <KpiTrendCard
+            heading="Shrinkage · 12wk"
+            value={plan.shrink12}
+            suffix="%"
+            caption="planned trend"
+            color="#2a78d6"
+            values={trends.shrink.values}
+            weeks={trends.shrink.weeks}
+            markIdx={trends.shrink.mark}
+            unit="%"
+          />
+          <KpiTrendCard
+            heading="Attrition · 12wk"
+            value={plan.attr12}
+            suffix="%"
+            caption="production, planned"
+            color="#eb6834"
+            values={trends.attr.values}
+            weeks={trends.attr.weeks}
+            markIdx={trends.attr.mark}
+            unit="%"
+          />
+          <KpiTrendCard
+            heading="Hiring · 12wk"
+            value={plan.hire12}
+            caption="planned new-hire HC"
+            color="#1a9e6a"
+            values={trends.hire.values}
+            weeks={trends.hire.weeks}
+            markIdx={trends.hire.mark}
+            unit="HC"
+          />
+          <KpiTrendCard
+            heading="O/U with shrinkage"
+            value={ouNow}
+            caption={`vs billable ${f2(plan.ou)}`}
+            color={ouNow < 0 ? '#e0483f' : '#1a9e6a'}
+            tone={ouNow < 0 ? 'neg' : 'pos'}
+            values={trends.ou.values}
+            weeks={trends.ou.weeks}
+            markIdx={trends.ou.mark}
+            unit="FTE"
+          />
         </div>
-        <div className="slabel">FTE Over / Under — week on week (this week marked)</div>
+        <div className="slabel">FTE over / under — week on week (this week marked)</div>
         <SeriesChart
           weeks={plan.weeks}
           curIdx={plan.curIdx}
           zeroLine
           height={220}
+          valueUnit="FTE"
           bars={[
             {
-              label: 'Actual/plan O/U',
-              data: past,
-              color: (v) => (v < 0 ? '#e0483f' : '#1a9e6a'),
-            },
-            {
-              label: 'Forecast O/U',
-              data: fu,
-              color: (v) => (v < 0 ? '#f3b0ab' : '#a9dcc6'),
+              label: 'O/U',
+              tipLabel: 'O/U',
+              data: plan.sOU,
+              color: (v, i) => ouColor(v, i, plan.curIdx),
             },
           ]}
         />
@@ -267,26 +286,79 @@ function ForecastTab({ plan, decisions, onDecide, onSubmitForecast }) {
   );
 }
 
+const HC_NEG = new Set(['tout', 'loaIn', 'attr', 'promo']);
+const HC_ROWS = [
+  ['Opening FTE', 'opening', true],
+  ['+ Nesting → Production', 'nest', false],
+  ['+ Transfer In', 'tin', false],
+  ['− Transfer Out', 'tout', false],
+  ['+ Back from LOA', 'loaOut', false],
+  ['− Move to LOA', 'loaIn', false],
+  ['− Production Attrition', 'attr', false],
+  ['− Promotion (out)', 'promo', false],
+  ['Closing FTE', 'closing', true],
+];
+const HC_MOVE_KEYS = [
+  ['nest', 'Nesting → Production'],
+  ['tin', 'Transfer In'],
+  ['tout', 'Transfer Out'],
+  ['loaOut', 'Back from LOA'],
+  ['loaIn', 'Move to LOA'],
+  ['attr', 'Production Attrition'],
+  ['promo', 'Promotion (out)'],
+];
+
+function hcSnapshot(src) {
+  const hc = { ...(src || {}) };
+  hc.closing = computeClosing(hc);
+  return hc;
+}
+
+function moveCell(hc, key, grp) {
+  const v = Number(hc?.[key]) || 0;
+  if (grp) return f2(v);
+  if (v === 0) return '0.00';
+  return `${HC_NEG.has(key) ? '−' : '+'}${f2(Math.abs(v))}`;
+}
+
+function moveClass(key, grp) {
+  if (grp) return '';
+  return HC_NEG.has(key) ? 'neg-t' : 'pos-t';
+}
+
+function signedDelta(v) {
+  const n = Number(v) || 0;
+  return {
+    txt: `${n < 0 ? '−' : '+'}${f2(Math.abs(n))}`,
+    cls: n < 0 ? 'neg-t' : 'pos-t',
+  };
+}
+
 function HeadcountTab({ plan, onSaveHeadcount }) {
   const baseCur = plan.hcCur;
-  const l = plan.hcLast || baseCur;
   const [editing, setEditing] = useState(false);
-  const [cur, setCur] = useState(() => ({ ...(baseCur || {}) }));
+  const [cur, setCur] = useState(() => hcSnapshot(baseCur));
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const tableRef = useRef(null);
+
   useEffect(() => {
-    setCur({ ...(plan.hcCur || {}) });
+    setCur(hcSnapshot(plan.hcCur));
     setEditing(false);
     setSaved(false);
   }, [plan.capId]);
+
+  useEffect(() => {
+    if (editing) return;
+    setCur(hcSnapshot(plan.hcCur));
+  }, [editing, plan.hcCur]);
 
   if (!baseCur) {
     return (
       <div className="tsec on" data-sec="hc">
         <div className="card in">
           <div className="ch">
-            <b>Headcount snapshot</b>
-            <span className="tag">step</span>
+            <b>FTE FLOW</b>
           </div>
           <p>No headcount snapshot for this plan.</p>
         </div>
@@ -294,63 +366,71 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
     );
   }
 
+  const last = hcSnapshot(plan.hcLast || { opening: baseCur.opening });
+  const live = hcSnapshot(cur);
   const prevWk = plan.weeks[Math.max(0, plan.curIdx - 1)] || '';
   const curWk = plan.weeks[plan.curIdx] || '';
-  const moveKeys = [
-    ['nest', 'Nesting → Production'],
-    ['tin', 'Transfer In'],
-    ['tout', 'Transfer Out'],
-    ['loaOut', 'Back from LOA'],
-    ['loaIn', 'Move to LOA'],
-    ['attr', 'Production Attrition'],
-    ['promo', 'Promotion (out)'],
-  ];
-  const rows = [
-    ['Opening FTE', 'opening', true],
-    ['+ Nesting → Production', 'nest', false],
-    ['+ Transfer In', 'tin', false],
-    ['− Transfer Out', 'tout', false],
-    ['+ Back from LOA', 'loaOut', false],
-    ['− Move to LOA', 'loaIn', false],
-    ['− Production Attrition', 'attr', false],
-    ['− Promotion (out)', 'promo', false],
-    ['Closing FTE', 'closing', true],
-  ];
-
-  const recomputeClosing = (hc) => {
-    const opening = Number(hc.opening) || 0;
-    const nest = Number(hc.nest) || 0;
-    const tin = Number(hc.tin) || 0;
-    const tout = Number(hc.tout) || 0;
-    const loaOut = Number(hc.loaOut) || 0;
-    const loaIn = Number(hc.loaIn) || 0;
-    const attr = Number(hc.attr) || 0;
-    const promo = Number(hc.promo) || 0;
-    return Math.round((opening + nest + tin - tout + loaOut - loaIn - attr - promo) * 100) / 100;
-  };
-
-  const cell = (wk, key, grp) => {
-    const v = wk?.[key] ?? 0;
-    if (grp) return f2(v);
-    if (v === 0) return '0.00';
-    const neg = key === 'tout' || key === 'loaIn' || key === 'attr' || key === 'promo';
-    return `${neg ? '−' : '+'}${f2(Math.abs(v))}`;
-  };
+  const net = signedDelta(live.closing - last.closing);
 
   return (
     <div className="tsec on" data-sec="hc">
-      <div className="card in">
-        <div className="ch">
-          <b>Headcount snapshot</b>
-          <span className="tag">FTE flow</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <div className="slabel" style={{ margin: 0 }}>
-            FTE flow · {plan.plan}
+      <div className="hc-strip">
+        <div>
+          <div className="hc-k">Plan</div>
+          <div className="hc-plan">
+            <span className="hc-cap">
+              {plan.capId} <span className="hc-caret">▾</span>
+            </span>
+            <b>{plan.plan}</b>
           </div>
+          <div className="hc-sub">
+            {plan.program} · {plan.region} · {plan.site}
+          </div>
+        </div>
+        <div>
+          <div className="hc-k">Close — last wk</div>
+          <div className="hc-v">{f2(last.closing)}</div>
+        </div>
+        <div>
+          <div className="hc-k">Open — this wk</div>
+          <div className="hc-v">{f2(live.opening)}</div>
+        </div>
+        <div>
+          <div className="hc-k">Close — this wk</div>
+          <div className="hc-v">{f2(live.closing)}</div>
+        </div>
+        <div>
+          <div className="hc-k">Net Δ</div>
+          <div className={`hc-v ${net.cls}`}>{net.txt}</div>
+        </div>
+        <div>
+          <div className="hc-k">Tfr in/out</div>
+          <div className="hc-v">
+            {f2(live.tin)} / {f2(live.tout)}
+          </div>
+        </div>
+        <div>
+          <div className="hc-k">Attr</div>
+          <div className="hc-v">{f2(live.attr)}</div>
+        </div>
+        <div>
+          <div className="hc-k">Detail</div>
           <button
             type="button"
-            className="btn g"
+            className="hc-chip"
+            onClick={() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}
+          >
+            ☰ FTE flow
+          </button>
+        </div>
+      </div>
+
+      <div className="card in" ref={tableRef}>
+        <div className="ch">
+          <b>FTE FLOW — {plan.plan}</b>
+          <button
+            type="button"
+            className="btn hc-upd"
             data-act="hc-update"
             onClick={() => {
               setEditing((v) => !v);
@@ -362,21 +442,17 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
         </div>
         {editing ? (
           <div className="hc-edit" data-act="hc-editor">
-            {moveKeys.map(([key, label]) => (
+            {HC_MOVE_KEYS.map(([key, label]) => (
               <label key={key}>
                 {label}
                 <input
                   type="number"
-                  step="0.1"
+                  step="0.01"
                   min="0"
                   value={cur[key] ?? 0}
                   onChange={(e) => {
                     const val = parseFloat(e.target.value) || 0;
-                    setCur((h) => {
-                      const next = { ...h, [key]: val };
-                      next.closing = recomputeClosing(next);
-                      return next;
-                    });
+                    setCur((h) => hcSnapshot({ ...h, [key]: val }));
                     setSaved(false);
                   }}
                 />
@@ -388,7 +464,7 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
               data-act="hc-save"
               disabled={busy}
               onClick={async () => {
-                const next = { ...cur, closing: recomputeClosing(cur) };
+                const next = hcSnapshot(cur);
                 setCur(next);
                 setBusy(true);
                 try {
@@ -416,7 +492,8 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
         ) : null}
         {saved ? (
           <div className="insight pos" data-act="hc-saved">
-            <b>Movements saved.</b> Closing FTE now {f2(cur.closing)}.
+            <b>Movements saved.</b> Closing FTE is now {f2(live.closing)}. Projected FTE, O/U, attrition
+            this week, and recommended OT all use this closing.
           </div>
         ) : null}
         <table className="fl">
@@ -428,15 +505,11 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(([label, key, grp]) => (
+            {HC_ROWS.map(([label, key, grp]) => (
               <tr key={label} className={grp ? 'grp-row' : ''}>
                 <td>{label}</td>
-                <td className={!grp && (l?.[key] || 0) > 0 ? (key.includes('out') || key === 'attr' || key === 'promo' || key === 'tout' || key === 'loaIn' ? 'neg-t' : 'pos-t') : ''}>
-                  {cell(l, key, grp)}
-                </td>
-                <td className={!grp && (cur?.[key] || 0) > 0 ? (key === 'tout' || key === 'loaIn' || key === 'attr' || key === 'promo' ? 'neg-t' : 'pos-t') : ''}>
-                  {cell(cur, key, grp)}
-                </td>
+                <td className={moveClass(key, grp)}>{moveCell(last, key, grp)}</td>
+                <td className={moveClass(key, grp)}>{moveCell(live, key, grp)}</td>
               </tr>
             ))}
           </tbody>
@@ -449,8 +522,12 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
 function NewHireTab({ plan, doneRoster, onMapRoster }) {
   const cls = plan.cls;
   const [uploadNote, setUploadNote] = useState('');
+  const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
-  useEffect(() => setUploadNote(''), [plan.capId]);
+  useEffect(() => {
+    setUploadNote('');
+    setBusy(false);
+  }, [plan.capId]);
 
   if (!cls) {
     return (
@@ -458,7 +535,7 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
         <div className="card in">
           <div className="ch">
             <b>New-hire &amp; onboarding</b>
-            <span className="tag">step</span>
+            <span className="tag">new hire</span>
           </div>
           <p>No class in the planning window for this plan.</p>
         </div>
@@ -467,23 +544,42 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
   }
 
   const className = cls.name || cls.className || `TC_2026_${String(plan.capId || '').replace(/\D/g, '')}`;
-  const gap = Math.abs(plan.sustained);
-  const missingFromRoster = Math.max(0, (cls.plan || 0) - (cls.actual || 0));
-  const mapped = doneRoster || cls.status === 'uploaded' || cls.status === 'mapped';
-  const countedFte = mapped ? Math.max(cls.actual || 0, 0) : missingFromRoster;
-  const realGap = mapped ? Math.max(0, gap - countedFte) : gap;
-  const stLabel =
-    mapped ? '✓ Uploaded' : cls.status === 'partial' ? '◑ Partial' : '✕ Not uploaded';
+  const status = String(cls.status || 'missing').toLowerCase();
+  const mapped = status === 'mapped' || status === 'uploaded' || status === 'partial';
+  const uploaded = status === 'uploaded' && (cls.rosterFile || cls.employeeCount > 0);
+  const planHc = Number(cls.plan) || 0;
+  const trainHc = Number(cls.trainHC) || planHc;
+  const onboarded = mapped ? Number(cls.actual) || 0 : 0;
+  const coverageGap = Math.abs(plan.sustained || 0);
+  const previewGap = Math.max(0, coverageGap - trainHc);
+  const liveGap = coverageGap;
+  const stLabel = uploaded ? '✓ Uploaded' : mapped ? '✓ Mapped' : status === 'partial' ? '◑ Partial' : '✕ Not uploaded';
 
-  const doQuickMap = () => {
-    setUploadNote(`Mapped ${f2(cls.plan)} planned hires for ${className} against Class Reference.`);
-    onMapRoster?.();
+  const mapPayload = (extra = {}) => ({
+    cap_id: plan.capId,
+    class_id: cls.id,
+    train_hc: extra.train_hc ?? trainHc,
+    ...extra,
+  });
+
+  const doQuickMap = async () => {
+    setBusy(true);
+    setUploadNote(`Mapping ${f2(trainHc)} trained FTE for ${className} to Class Reference…`);
+    try {
+      await onMapRoster?.(mapPayload());
+      setUploadNote(`Mapped ${f2(trainHc)} FTE for ${className} against Class Reference.`);
+    } catch (err) {
+      setUploadNote(err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const doUploadFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    setBusy(true);
     try {
       const parsed = await readRosterFile(file);
       if (!parsed.rows.length) {
@@ -491,38 +587,44 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
         return;
       }
       setUploadNote(`Reading ${parsed.filename} · ${parsed.rows.length} employees…`);
-      await onMapRoster?.({
-        train_hc: parsed.totalFte,
-        employees: parsed.rows,
-        source_filename: parsed.filename,
-      });
+      await onMapRoster?.(
+        mapPayload({
+          train_hc: parsed.totalFte,
+          employees: parsed.rows,
+          source_filename: parsed.filename,
+        }),
+      );
       setUploadNote(
-        `Mapped ${parsed.rows.length} from ${parsed.filename} · ${f2(parsed.totalFte)} FTE`,
+        `Uploaded ${parsed.filename} · ${parsed.rows.length} employees · ${f2(parsed.totalFte)} FTE mapped`,
       );
     } catch (err) {
       setUploadNote(err?.message || String(err));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <div className="tsec on" data-sec="nh">
-      <div className={`card ${mapped ? 'in' : 'warn in'}`}>
+      <div className={`card ${mapped ? 'good in' : 'warn in'}`}>
         <div className="ch">
           <b>{mapped ? 'New-hire class' : 'Roster gap — this one does matter'}</b>
-          <span className="tag">new hire</span>
+          <span className={`chiptag ${mapped ? 'ok' : 'miss'}`}>{stLabel}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-          <div className="slabel" style={{ margin: 0 }}>
-            Class {className} · {plan.plan}
-          </div>
-          {!mapped ? (
-            <button type="button" className="btn g" data-act="nh-upload" onClick={doQuickMap}>
-              ⬆ Upload roster
-            </button>
-          ) : (
-            <span className="chiptag ok">{stLabel}</span>
-          )}
-        </div>
+        {!mapped ? (
+          <p>
+            Class <b>{className}</b> ran on <b>{cls.date || '—'}</b>.{' '}
+            <b>{f2(trainHc)} FTE</b> of trained heads are onboarded but not on the employee roster, so
+            projected FTE excludes them and the shortfall reads worse than it is.
+          </p>
+        ) : (
+          <p>
+            {uploaded
+              ? `${cls.employeeCount || 0} employees from ${cls.rosterFile} are on the roster.`
+              : `${f2(onboarded)} FTE mapped to class reference ${className}.`}{' '}
+            Projected FTE includes them.
+          </p>
+        )}
         <div className="kpis">
           <div className="kpi">
             <b style={{ fontSize: '.9rem' }}>{className}</b>
@@ -536,7 +638,7 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
           </div>
           <div className={`kpi ${mapped ? 'pos' : 'neg'}`}>
             <b>
-              {f2(cls.actual)} / {f2(cls.plan)}
+              {f2(onboarded)} / {f2(planHc)}
             </b>
             <span>Onboarded / plan</span>
           </div>
@@ -558,10 +660,12 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
           <tbody>
             <tr>
               <td>{className}</td>
-              <td>{cls.date}</td>
-              <td>{f2(cls.plan)}</td>
-              <td className={mapped ? '' : 'neg-t'}>{f2(cls.actual)}</td>
-              <td className={mapped ? 'pos-t' : 'neg-t'}>{mapped ? 'Mapped' : 'Not uploaded'}</td>
+              <td>{cls.date || '—'}</td>
+              <td>{f2(planHc)}</td>
+              <td className={mapped ? 'pos-t' : 'neg-t'}>{f2(onboarded)}</td>
+              <td className={mapped ? 'pos-t' : 'neg-t'}>
+                {uploaded ? 'Uploaded' : mapped ? 'Mapped' : 'Not uploaded'}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -569,15 +673,15 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
           <div className="math">
             <div className="mline">
               <span>Reported 12-week gap</span>
-              <span>{f2(gap)} FTE</span>
+              <span>{f2(coverageGap)} FTE</span>
             </div>
             <div className="mline cut">
               <span>Onboarded, not on roster</span>
-              <span>−{f2(missingFromRoster)} FTE</span>
+              <span>−{f2(trainHc)} FTE</span>
             </div>
             <div className="mline">
               <span>Real gap after map</span>
-              <span>{f2(Math.max(0, gap - missingFromRoster))} FTE</span>
+              <span>{f2(previewGap)} FTE</span>
             </div>
           </div>
         ) : null}
@@ -589,23 +693,24 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
           onChange={doUploadFile}
         />
         <div className="acts">
-          <div className="btn p" data-act="go-roster" onClick={doQuickMap}>
-            Map the roster
-          </div>
+          <button type="button" className="btn p" data-act="go-roster" disabled={busy} onClick={doQuickMap}>
+            {busy ? 'Mapping…' : mapped ? 'Remap the roster' : 'Map the roster'}
+          </button>
           <button
             type="button"
             className="btn g"
             data-act="nh-file"
+            disabled={busy}
             onClick={() => fileRef.current?.click()}
           >
             Upload file
           </button>
         </div>
         {uploadNote ? <div className="insight info">{uploadNote}</div> : null}
-        <div className={`done ${doneRoster || mapped ? 'on' : ''}`} id="doneRoster">
+        <div className={`done ${mapped ? 'on' : ''}`} id="doneRoster">
           <span>✓</span>
           <span>
-            {f2(countedFte)} FTE mapped · projected FTE corrected · gap now {f2(realGap)}
+            {f2(onboarded)} FTE mapped · projected FTE corrected · gap now {f2(liveGap)}
           </span>
         </div>
       </div>
@@ -625,44 +730,38 @@ function ShrinkageTab({
   onDecide,
 }) {
   const past = (plan.sShrink || []).map((v, i) => (i <= plan.curIdx ? v : null));
-  const [planLine, setPlanLine] = useState(() =>
-    (plan.sShrinkPlan || []).map((v, i) => (i < plan.curIdx ? null : v)),
-  );
   const [showSeg, setShowSeg] = useState(false);
   useEffect(() => {
-    setPlanLine((plan.sShrinkPlan || []).map((v, i) => (i < plan.curIdx ? null : v)));
     setShowSeg(false);
-  }, [plan.capId, plan.curIdx, plan.sShrinkPlan]);
+  }, [plan.capId]);
 
   const segs = useMemo(() => segmentShrinkage(plan), [plan]);
+  const editorWeeks = state.editorWeeks || [];
+  const dragUntilIdx = editorWeeks.length
+    ? Math.max(...editorWeeks.map((w) => w.weekIdx))
+    : plan.curIdx;
 
-  // Prefer live editor values on the forward weeks when present
   const displayLine = useMemo(() => {
-    const line = [...planLine];
-    (state.editorWeeks || []).forEach((ew) => {
+    const line = (plan.sShrinkPlan || []).map((v, i) => (i < plan.curIdx ? null : v));
+    editorWeeks.forEach((ew) => {
       if (ew?.weekIdx != null && ew.weekIdx >= plan.curIdx) line[ew.weekIdx] = ew.cur;
     });
     return line;
-  }, [planLine, state.editorWeeks, plan.curIdx]);
+  }, [plan.sShrinkPlan, editorWeeks, plan.curIdx]);
 
-  const fwdVals = displayLine.filter((v, i) => i >= plan.curIdx && v != null);
+  const fwdVals = displayLine.slice(plan.curIdx, plan.curIdx + 12).filter((v) => v != null);
   const planFwd = fwdVals.length
     ? fwdVals.reduce((a, b) => a + b, 0) / fwdVals.length
     : plan.shrink12 || 0;
-  // Live recommendation: compare 8-wk actual to current edited forward plan avg
   const rec = shrRec(plan, planFwd);
   const actual8 = rec.actAvg;
   const variance = actual8 - planFwd;
   const decision = decisions?.shr;
 
   const applyDrag = (weekIdx, value) => {
-    setPlanLine((arr) => {
-      const next = [...arr];
-      next[weekIdx] = value;
-      return next;
-    });
-    const editorIdx = (state.editorWeeks || []).findIndex((w) => w.weekIdx === weekIdx);
-    if (editorIdx >= 0) onEditorChange?.(editorIdx, value, true);
+    const editorIdx = editorWeeks.findIndex((w) => w.weekIdx === weekIdx);
+    if (editorIdx < 0) return;
+    onEditorChange?.(editorIdx, value, true);
     onDecide?.('shr', null, 'mod');
   };
 
@@ -702,14 +801,14 @@ function ShrinkageTab({
           ) : null}
           <div style={{ fontSize: '.72rem', color: 'var(--dim)', marginTop: 4 }}>
             Recent 8-wk actual avg {f2(rec.actAvg)}% vs planned {f2(rec.plan)}% over next 12 wk.
+            Graph and sliders are the same 12 weeks. Other tabs update live; Submit writes the plan.
           </div>
         </div>
         <DecisionBar
           decision={decision}
           onAccept={() => {
             const target = rec.actAvg;
-            setPlanLine((arr) => arr.map((v, i) => (i >= plan.curIdx ? target : v)));
-            (state.editorWeeks || []).forEach((ew, k) => onEditorChange?.(k, target, true));
+            editorWeeks.forEach((ew, k) => onEditorChange?.(k, target, true));
             onDecide?.('shr', null, 'acc');
           }}
           onModify={() => onDecide?.('shr', null, 'mod')}
@@ -728,7 +827,7 @@ function ShrinkageTab({
         {showSeg ? (
           <div className="seg-panel" data-act="shr-seg-panel">
             <div className="slabel" style={{ marginTop: 0 }}>
-              Planned vs unplanned · next 12 wk
+              Planned vs unplanned · next 12 wk · 55/45 split of Total (source has no segment rows)
             </div>
             <SeriesChart
               weeks={plan.weeks.slice(plan.curIdx, plan.curIdx + 12)}
@@ -751,8 +850,16 @@ function ShrinkageTab({
                     <b>
                       {cat} · {f2(avg)}%
                     </b>
-                    <span>{Math.round((segs.weights[cat] || 0) * 100)}% of total · demo split</span>
-                    <div style={{ marginTop: 6 }}>{sparkMini({ values: vals, color: SEG_COLORS[cat] || '#2a78d6' })}</div>
+                    <span>{Math.round((segs.weights[cat] || 0) * 100)}% of live total · assumed mix</span>
+                    <div style={{ marginTop: 6 }}>
+                      {sparkMini({
+                        values: vals,
+                        weeks: plan.weeks.slice(plan.curIdx, plan.curIdx + 12),
+                        color: SEG_COLORS[cat] || '#2a78d6',
+                        unit: '%',
+                        label: cat,
+                      })}
+                    </div>
                   </div>
                 );
               })}
@@ -767,14 +874,16 @@ function ShrinkageTab({
           bars={[{ label: 'Actual', data: past, color: '#2a78d6' }]}
           line={{ label: 'Plan', data: displayLine, color: '#c98aa0' }}
           dragFromIdx={plan.curIdx}
+          dragUntilIdx={dragUntilIdx}
           snap={0.5}
           minV={0}
-          maxV={95}
+          maxV={70}
+          dragHint="↕ Drag plan points for this week through the next 12 (same weeks as the sliders)"
           onDragPoint={applyDrag}
         />
-        {state.editorReady ? (
+        {editorWeeks.length ? (
           <ShrinkageEditor
-            weeks={state.editorWeeks}
+            weeks={editorWeeks}
             billable={plan.billable}
             onChange={onEditorChange}
             editSrc={state.editSrc}
@@ -792,34 +901,53 @@ function ShrinkageTab({
   );
 }
 
-function AttritionTab({ plan, onDecide, onSubmitAttrition }) {
+function AttritionTab({
+  plan,
+  state,
+  onEditorChange,
+  onSubmitAttrition,
+  onResetAttrition,
+  onApplyValue,
+  onApplyPct,
+  onDecide,
+}) {
   const past = (plan.sAttr || []).slice(Math.max(0, plan.curIdx - 8), plan.curIdx + 1).filter((v) => v != null);
   const avg = past.length ? past.reduce((a, b) => a + b, 0) / past.length : plan.attr12 || 0;
-  const [planLine, setPlanLine] = useState(() => [...(plan.sAttrPlan || [])]);
-  const [baseLine, setBaseLine] = useState(() => [...(plan.sAttrPlan || [])]);
-  const [editing, setEditing] = useState(false);
-  const [lastIdx, setLastIdx] = useState(plan.curIdx);
-  const [submitted, setSubmitted] = useState(false);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    const series = [...(plan.sAttrPlan || [])];
-    setPlanLine(series);
-    setBaseLine(series);
-    setEditing(false);
-    setSubmitted(false);
-    setLastIdx(plan.curIdx);
-  }, [plan.capId, plan.sAttrPlan]);
+  const attrWeeks = state.attrWeeks || [];
+  const dragUntilIdx = attrWeeks.length
+    ? Math.max(...attrWeeks.map((w) => w.weekIdx))
+    : plan.curIdx;
 
-  const planned = planLine[plan.curIdx] || 0;
-  const variance = planned - avg;
+  const displayLine = useMemo(() => {
+    const line = (plan.sAttrPlan || []).map((v, i) => (i < plan.curIdx ? null : v));
+    attrWeeks.forEach((ew) => {
+      if (ew?.weekIdx != null && ew.weekIdx >= plan.curIdx) line[ew.weekIdx] = ew.cur;
+    });
+    return line;
+  }, [plan.sAttrPlan, attrWeeks, plan.curIdx]);
+
+  const fwdVals = displayLine.slice(plan.curIdx, plan.curIdx + 12).filter((v) => v != null);
+  const planFwd = fwdVals.length
+    ? fwdVals.reduce((a, b) => a + b, 0) / fwdVals.length
+    : plan.attr12 || 0;
+  const plannedThis = displayLine[plan.curIdx] ?? planFwd;
+  const variance = planFwd - avg;
   const act = (plan.sAttr || []).map((v, i) => (i <= plan.curIdx ? v : null));
-  const pln = planLine.map((v, i) => (i >= plan.curIdx ? v : null));
-  const lastVal = planLine[lastIdx];
-  const lastBase = baseLine[lastIdx];
+  const srcIdx = state.attrLastEdit != null && attrWeeks[state.attrLastEdit] ? state.attrLastEdit : 0;
+  const src = attrWeeks[srcIdx];
+  const lastVal = src?.cur;
+  const lastBase = src?.base;
   const pct =
     lastBase != null && lastBase !== 0 && lastVal != null
       ? Math.round(((lastVal - lastBase) / lastBase) * 1000) / 10
       : null;
+
+  const applyDrag = (weekIdx, value) => {
+    const editorIdx = attrWeeks.findIndex((w) => w.weekIdx === weekIdx);
+    if (editorIdx < 0) return;
+    onEditorChange?.(editorIdx, value);
+    onDecide?.('att', null, 'mod');
+  };
 
   return (
     <div className="tsec on" data-sec="att">
@@ -834,43 +962,48 @@ function AttritionTab({ plan, onDecide, onSubmitAttrition }) {
             <span>Avg actual · 8wk</span>
           </div>
           <div className="kpi">
-            <b>{f2(planned)}%</b>
-            <span>Planned · this wk</span>
+            <b>{f2(planFwd)}%</b>
+            <span>Planned fwd · 12wk</span>
           </div>
-          <div className="kpi">
+          <div className={`kpi ${variance > 0.2 ? 'neg' : variance < -0.2 ? 'pos' : ''}`}>
             <b>
               {variance >= 0 ? '+' : ''}
               {f2(variance)}pt
             </b>
-            <span>Variance</span>
+            <span>Variance vs actual</span>
           </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6, gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn g" data-act="att-adjust" onClick={() => setEditing((v) => !v)}>
-            {editing ? 'Hide adjust' : '✎ Adjust future weeks'}
-          </button>
+        <div className="insight info" style={{ marginTop: 8 }}>
+          This week plan {f2(plannedThis)}%. Attrition % × stock FTE leaves the projection; later weeks inherit that loss.
+          Graph and sliders are the same 12 weeks. Overview / Recommend / New Hire update live; Submit writes the plan.
         </div>
-        {editing ? (
-          <>
-            <div className="insight info" data-act="att-edit-hint">
-              Drag forward plan points, then apply / submit. Snaps to 0.1pt.
+        <SeriesChart
+          weeks={plan.weeks}
+          curIdx={plan.curIdx}
+          height={200}
+          yFmt={(v) => `${f2(v)}%`}
+          bars={[{ label: 'Actual', data: act, color: '#2a78d6' }]}
+          line={{ label: 'Plan', data: displayLine, color: '#2b2f36' }}
+          dragFromIdx={plan.curIdx}
+          dragUntilIdx={dragUntilIdx}
+          snap={0.1}
+          minV={0}
+          maxV={40}
+          dragHint="↕ Drag plan points for this week through the next 12 (same weeks as the sliders)"
+          onDragPoint={applyDrag}
+        />
+        {attrWeeks.length ? (
+          <div className="edit">
+            <div className="enote">
+              <b>Adjust forward weeks</b> · next {attrWeeks.length} wk · attr FTE = stock × rate · New O/U uses live
+              projected FTE
             </div>
             <div className="repbar">
               <span className="repk">
-                Last edit {plan.weeks[lastIdx] || '—'} → <b>{f2(lastVal)}%</b>
+                Last edit {src?.wk || '—'} → <b>{f2(lastVal)}%</b>
                 {pct != null ? ` (${pct > 0 ? '+' : ''}${f2(pct)}%)` : ''}
               </span>
-              <button
-                type="button"
-                className="repbtn"
-                data-act="att-apply-val"
-                onClick={() => {
-                  if (lastVal == null) return;
-                  setPlanLine((arr) => arr.map((v, i) => (i >= plan.curIdx ? lastVal : v)));
-                  onDecide?.('att', null, 'mod');
-                  setSubmitted(false);
-                }}
-              >
+              <button type="button" className="repbtn" data-act="att-apply-val" onClick={() => onApplyValue?.()}>
                 ↔ Apply value to all weeks
               </button>
               <button
@@ -878,87 +1011,68 @@ function AttritionTab({ plan, onDecide, onSubmitAttrition }) {
                 className="repbtn"
                 data-act="att-apply-pct"
                 disabled={pct == null}
-                onClick={() => {
-                  if (pct == null) return;
-                  const factor = 1 + pct / 100;
-                  setPlanLine((arr) =>
-                    arr.map((v, i) => {
-                      if (i < plan.curIdx) return v;
-                      const b = baseLine[i] ?? v ?? 0;
-                      return Math.min(40, Math.round(b * factor * 100) / 100);
-                    }),
-                  );
-                  onDecide?.('att', null, 'mod');
-                  setSubmitted(false);
-                }}
+                onClick={() => onApplyPct?.()}
               >
                 % Apply {pct != null ? `${pct > 0 ? '+' : ''}${f2(pct)}%` : 'change'} to all weeks
               </button>
             </div>
-          </>
-        ) : null}
-        <SeriesChart
-          weeks={plan.weeks}
-          curIdx={plan.curIdx}
-          height={200}
-          yFmt={(v) => `${f2(v)}%`}
-          bars={[{ label: 'Actual', data: act, color: '#2a78d6' }]}
-          line={{ label: 'Plan', data: pln, color: '#2b2f36', dash: editing ? undefined : '5 4' }}
-          dragFromIdx={editing ? plan.curIdx : null}
-          snap={0.1}
-          minV={0}
-          maxV={40}
-          onDragPoint={
-            editing
-              ? (i, v) => {
-                  setPlanLine((arr) => {
-                    const next = [...arr];
-                    next[i] = v;
-                    return next;
-                  });
-                  setLastIdx(i);
-                  setSubmitted(false);
-                  onDecide?.('att', null, 'mod');
-                }
-              : null
-          }
-        />
-        {editing ? (
-          <div className="acts">
             <div
-              className="btn p"
-              data-act="att-submit"
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const weeks = planLine
-                    .map((v, i) => (i >= plan.curIdx && v != null ? { week_idx: i, attr_plan: v } : null))
-                    .filter(Boolean);
-                  await onSubmitAttrition?.(weeks);
-                  setBaseLine([...planLine]);
-                  setSubmitted(true);
-                } finally {
-                  setBusy(false);
-                }
-              }}
+              className="erow"
+              style={{ fontSize: '.55rem', letterSpacing: '.09em', textTransform: 'uppercase', color: '#9A948A' }}
             >
-              {busy ? 'Submitting…' : '⬆ Submit attrition plan'}
+              <span>Week</span>
+              <span>Attrition</span>
+              <span style={{ textAlign: 'right' }}>%</span>
+              <span style={{ textAlign: 'right' }}>Attr FTE</span>
+              <span style={{ textAlign: 'right' }}>New O/U</span>
             </div>
-            <div
-              className="btn g"
-              data-act="att-reset"
-              onClick={() => {
-                setPlanLine([...baseLine]);
-                setSubmitted(false);
-              }}
-            >
-              Reset
+            <div>
+              {attrWeeks.map((w, k) => {
+                const attrFte = ((Number(w.stock) || 0) * (Number(w.cur) || 0)) / 100;
+                const ou = Number(plan.sOU?.[w.weekIdx]);
+                return (
+                  <div className={`erow ${k === srcIdx ? 'hl' : ''}`} key={w.weekIdx ?? k}>
+                    <span className="wk">{w.wk}</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="40"
+                      step="0.1"
+                      value={w.cur}
+                      onChange={(e) => {
+                        onEditorChange?.(k, parseFloat(e.target.value));
+                        onDecide?.('att', null, 'mod');
+                      }}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="40"
+                      step="0.1"
+                      value={Number(w.cur).toFixed(2)}
+                      onChange={(e) => {
+                        onEditorChange?.(k, parseFloat(e.target.value));
+                        onDecide?.('att', null, 'mod');
+                      }}
+                    />
+                    <span className="rq">{f2(attrFte)}</span>
+                    <span className={`ou ${ou < 0 ? 'neg-t' : 'pos-t'}`}>{f2(ou)}</span>
+                  </div>
+                );
+              })}
             </div>
-          </div>
-        ) : null}
-        {submitted ? (
-          <div className="insight pos" data-act="att-submitted">
-            <b>Submitted.</b> Attrition plan saved · Overview attrition will refresh.
+            <div className="acts">
+              <div className="btn p" data-act="att-submit" onClick={() => onSubmitAttrition?.()}>
+                Submit attrition plan
+              </div>
+              <div className="btn g" data-act="att-reset" onClick={() => onResetAttrition?.()}>
+                Reset
+              </div>
+            </div>
+            <div className={`done ${state.doneAttr ? 'on' : ''}`}>
+              <span>✓</span>
+              <span>Forward weeks submitted · projected FTE and O/U recalculated</span>
+            </div>
           </div>
         ) : null}
       </div>
@@ -1222,6 +1336,10 @@ export default function PlanTabs({
   onApplyShrinkageValue,
   onApplyShrinkagePct,
   onSubmitAttrition,
+  onResetAttrition,
+  onApplyAttritionValue,
+  onApplyAttritionPct,
+  onAttritionChange,
   onSubmitForecast,
   onSaveHeadcount,
   onMapRoster,
@@ -1235,19 +1353,23 @@ export default function PlanTabs({
 }) {
   if (!plan) return null;
 
-  const gotBy = computeXutil(allPlans.length ? allPlans : [plan]).gotBy;
+  const livePlan = applyLiveShrinkage(applyLiveAttrition(plan, state?.attrWeeks), state?.editorWeeks);
+  const plansForXutil = (allPlans.length ? allPlans : [livePlan]).map((p) =>
+    p.capId === livePlan.capId ? livePlan : p,
+  );
+  const gotBy = computeXutil(plansForXutil).gotBy;
 
   return (
     <>
-      {activeTab === 'ov' && <OverviewTab plan={plan} />}
+      {activeTab === 'ov' && <OverviewTab plan={livePlan} />}
       {activeTab === 'fw' && (
-        <ForecastTab plan={plan} decisions={decisions} onDecide={onDecide} onSubmitForecast={onSubmitForecast} />
+        <ForecastTab plan={livePlan} decisions={decisions} onDecide={onDecide} onSubmitForecast={onSubmitForecast} />
       )}
-      {activeTab === 'hc' && <HeadcountTab plan={plan} onSaveHeadcount={onSaveHeadcount} />}
-      {activeTab === 'nh' && <NewHireTab plan={plan} doneRoster={state.doneRoster} onMapRoster={onMapRoster} />}
+      {activeTab === 'hc' && <HeadcountTab plan={livePlan} onSaveHeadcount={onSaveHeadcount} />}
+      {activeTab === 'nh' && <NewHireTab plan={livePlan} doneRoster={state.doneRoster} onMapRoster={onMapRoster} />}
       {activeTab === 'shr' && (
         <ShrinkageTab
-          plan={plan}
+          plan={livePlan}
           state={state}
           onEditorChange={onEditorChange}
           onSubmitShrinkage={onSubmitShrinkage}
@@ -1259,11 +1381,20 @@ export default function PlanTabs({
         />
       )}
       {activeTab === 'att' && (
-        <AttritionTab plan={plan} onDecide={onDecide} onSubmitAttrition={onSubmitAttrition} />
+        <AttritionTab
+          plan={livePlan}
+          state={state}
+          onEditorChange={onAttritionChange}
+          onSubmitAttrition={onSubmitAttrition}
+          onResetAttrition={onResetAttrition}
+          onApplyValue={onApplyAttritionValue}
+          onApplyPct={onApplyAttritionPct}
+          onDecide={onDecide}
+        />
       )}
       {activeTab === 'rec' && (
         <RecommendTab
-          plan={plan}
+          plan={livePlan}
           doneRoster={state.doneRoster}
           doneRec={state.doneRec}
           onAccept={onAcceptRec}
@@ -1277,7 +1408,7 @@ export default function PlanTabs({
       )}
       {activeTab === 'exe' && (
         <ExecuteTab
-          plan={plan}
+          plan={livePlan}
           doneRec={state.doneRec}
           otWeeks={otWeeks}
           gotBy={gotBy}
