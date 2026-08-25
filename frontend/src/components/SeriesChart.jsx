@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { f1 } from '../utils/format';
+import { f1, f2 } from '../utils/format';
 
 /** Generic SVG bar (+ optional draggable line) series chart. */
 export default function SeriesChart({
@@ -17,12 +17,16 @@ export default function SeriesChart({
   snap = 0.5,
   minV = 0,
   maxV = 95,
+  /** Hover tooltip — matches HTML Chart.js style (dark tip, week + values). */
+  showTooltip = true,
+  tooltipUnit = 'FTE',
 }) {
   const svgRef = useRef(null);
   const dragIdxRef = useRef(null);
   const onDragRef = useRef(onDragPoint);
   onDragRef.current = onDragPoint;
   const [dragIdx, setDragIdx] = useState(null);
+  const [hoverIdx, setHoverIdx] = useState(null);
   const lineData = line?.data || null;
 
   const n = weeks.length || bars[0]?.data?.length || lineData?.length || 0;
@@ -39,7 +43,6 @@ export default function SeriesChart({
     if (lineData) lineData.forEach((v) => v != null && vals.push(v));
     if (!vals.length) vals.push(0);
     if (zeroLine) vals.push(0);
-    // keep headroom while dragging
     if (dragFromIdx != null) {
       vals.push(minV, maxV);
     }
@@ -83,14 +86,12 @@ export default function SeriesChart({
   const onDragStart = (i, e) => {
     if (dragFromIdx == null || i < dragFromIdx || !onDragRef.current) return;
     if (typeof e.button === 'number' && e.button !== 0) return;
-    // pointerdown + mousedown both fire in some browsers — only start once
     if (dragIdxRef.current != null) return;
     e.preventDefault();
     e.stopPropagation();
     dragIdxRef.current = i;
     setDragIdx(i);
 
-    // Listen for both pointer + mouse moves (Playwright / some browsers only emit one)
     const move = (ev) => {
       if (dragIdxRef.current == null) return;
       const v = valueFromClientY(ev.clientY);
@@ -110,6 +111,64 @@ export default function SeriesChart({
     window.addEventListener('mouseup', up);
     window.addEventListener('pointercancel', up);
   };
+
+  const tipLines = useMemo(() => {
+    if (hoverIdx == null || hoverIdx < 0 || hoverIdx >= n) return [];
+    const lines = [];
+    bars.forEach((series) => {
+      const v = series.data?.[hoverIdx];
+      if (v == null) return;
+      const label = series.label || 'Value';
+      if (/o\/u/i.test(label) || zeroLine) {
+        lines.push({ label, text: `O/U: ${f2(v)} ${tooltipUnit}` });
+      } else if (/%/.test(label) || tooltipUnit === '%') {
+        lines.push({ label, text: `${label}: ${f2(v)}%` });
+      } else {
+        lines.push({
+          label,
+          text: `${label}: ${f2(v)}${tooltipUnit ? ` ${tooltipUnit}` : ''}`,
+        });
+      }
+    });
+    if (lineData?.[hoverIdx] != null) {
+      const label = line?.label || 'Plan';
+      lines.push({
+        label,
+        text:
+          tooltipUnit === '%'
+            ? `${label}: ${f2(lineData[hoverIdx])}%`
+            : `${label}: ${f2(lineData[hoverIdx])}${tooltipUnit ? ` ${tooltipUnit}` : ''}`,
+      });
+    }
+    return lines;
+  }, [hoverIdx, n, bars, lineData, line?.label, zeroLine, tooltipUnit]);
+
+  const tipLinesUnique = useMemo(() => {
+    const seen = new Set();
+    return tipLines.filter((ln) => {
+      if (seen.has(ln.text)) return false;
+      seen.add(ln.text);
+      return true;
+    });
+  }, [tipLines]);
+
+  const updateHoverFromClientX = useCallback(
+    (clientX) => {
+      if (!showTooltip || !svgRef.current || !layoutRef.current) return;
+      if (dragIdxRef.current != null) return;
+      const lay = layoutRef.current;
+      const rect = svgRef.current.getBoundingClientRect();
+      const px = ((clientX - rect.left) / rect.width) * lay.W;
+      const idx = Math.floor((px - lay.L) / lay.bw);
+      const count = weeks.length || bars[0]?.data?.length || line?.data?.length || 0;
+      if (idx < 0 || idx >= count) {
+        setHoverIdx(null);
+        return;
+      }
+      setHoverIdx(idx);
+    },
+    [showTooltip, weeks.length, bars, line?.data?.length],
+  );
 
   if (!n || !layout) return null;
   const { W, H, L, R, T, B, lo, Y, bw, zy } = layout;
@@ -137,8 +196,14 @@ export default function SeriesChart({
     linePath = pts.length ? `M ${pts.join(' L ')}` : '';
   }
 
+  const tipLeftPct = hoverIdx != null ? ((L + bw * hoverIdx + bw * 0.5) / W) * 100 : 0;
+
   return (
-    <div className={`chart on ${canDrag ? 'draggable-chart' : ''}`} style={{ marginTop: 8 }}>
+    <div
+      className={`chart on ${canDrag ? 'draggable-chart' : ''}`}
+      style={{ marginTop: 8, position: 'relative' }}
+      onMouseLeave={() => setHoverIdx(null)}
+    >
       {canDrag ? (
         <div className="dragnote" style={{ marginBottom: 4 }}>
           ↕ Drag the plan points for any future week (snaps to {snap})
@@ -148,6 +213,7 @@ export default function SeriesChart({
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         style={{ touchAction: canDrag ? 'none' : undefined, cursor: dragIdx != null ? 'ns-resize' : undefined }}
+        onMouseMove={(e) => updateHoverFromClientX(e.clientX)}
       >
         {grid}
         {zeroLine ? <line className="zl" x1={L} y1={zy} x2={W - R} y2={zy} /> : null}
@@ -157,18 +223,50 @@ export default function SeriesChart({
             const color = typeof series.color === 'function' ? series.color(v, i) : series.color || '#2a78d6';
             const bx = L + bw * i + bw * 0.22;
             const w = bw * 0.56;
+            const dim = hoverIdx != null && hoverIdx !== i;
             if (zeroLine) {
               const y = v >= 0 ? Y(v) : zy;
               const h = Math.max(1.5, Math.abs(Y(v) - zy));
-              return <rect key={`${si}-${i}`} x={bx} y={y} width={w} height={h} rx="2.5" fill={color} />;
+              return (
+                <rect
+                  key={`${si}-${i}`}
+                  x={bx}
+                  y={y}
+                  width={w}
+                  height={h}
+                  rx="2.5"
+                  fill={color}
+                  opacity={dim ? 0.35 : 1}
+                  pointerEvents="none"
+                />
+              );
             }
             const y = Y(v);
             const h = Math.max(1.5, Y(lo) - y);
-            return <rect key={`${si}-${i}`} x={bx} y={y} width={w} height={h} rx="2.5" fill={color} />;
+            return (
+              <rect
+                key={`${si}-${i}`}
+                x={bx}
+                y={y}
+                width={w}
+                height={h}
+                rx="2.5"
+                fill={color}
+                opacity={dim ? 0.35 : 1}
+                pointerEvents="none"
+              />
+            );
           }),
         )}
         {linePath ? (
-          <path d={linePath} fill="none" stroke={line.color || '#c98aa0'} strokeWidth="2" strokeDasharray={line.dash || undefined} />
+          <path
+            d={linePath}
+            fill="none"
+            stroke={line.color || '#c98aa0'}
+            strokeWidth="2"
+            strokeDasharray={line.dash || undefined}
+            pointerEvents="none"
+          />
         ) : null}
         {lineData &&
           lineData.map((v, i) => {
@@ -177,18 +275,30 @@ export default function SeriesChart({
             if (!forward && dragFromIdx != null) return null;
             const draggable = canDrag && i >= dragFromIdx;
             return (
-              <circle
-                key={`pt${i}`}
-                cx={L + bw * i + bw * 0.5}
-                cy={Y(v)}
-                r={draggable ? (dragIdx === i ? 6 : 5) : 3.5}
-                fill={line.color || '#c98aa0'}
-                stroke="#fff"
-                strokeWidth="1.2"
-                style={{ cursor: draggable ? 'ns-resize' : 'default' }}
-                onPointerDown={(e) => onDragStart(i, e)}
-                onMouseDown={(e) => onDragStart(i, e)}
-              />
+              <g key={`pt${i}`}>
+                {draggable ? (
+                  <circle
+                    cx={L + bw * i + bw * 0.5}
+                    cy={Y(v)}
+                    r={14}
+                    fill="transparent"
+                    style={{ cursor: 'ns-resize' }}
+                    onPointerDown={(e) => onDragStart(i, e)}
+                    onMouseDown={(e) => onDragStart(i, e)}
+                  />
+                ) : null}
+                <circle
+                  cx={L + bw * i + bw * 0.5}
+                  cy={Y(v)}
+                  r={draggable ? (dragIdx === i ? 6 : 5) : 3.5}
+                  fill={line.color || '#c98aa0'}
+                  stroke="#fff"
+                  strokeWidth="1.2"
+                  style={{ cursor: draggable ? 'ns-resize' : 'default', pointerEvents: draggable ? 'none' : 'auto' }}
+                  onPointerDown={(e) => onDragStart(i, e)}
+                  onMouseDown={(e) => onDragStart(i, e)}
+                />
+              </g>
             );
           })}
         {markThisWeek && curIdx >= 0 && curIdx < n ? (
@@ -201,20 +311,45 @@ export default function SeriesChart({
               stroke="#f5a623"
               strokeWidth="1.5"
               strokeDasharray="4 3"
+              pointerEvents="none"
             />
-            <text x={L + bw * curIdx + bw * 0.5} y={T - 4} textAnchor="middle" fill="#f5a623" style={{ fontSize: 9, fontWeight: 700 }}>
+            <text
+              x={L + bw * curIdx + bw * 0.5}
+              y={T - 4}
+              textAnchor="middle"
+              fill="#f5a623"
+              style={{ fontSize: 9, fontWeight: 700 }}
+              pointerEvents="none"
+            >
               THIS WK
             </text>
           </>
         ) : null}
         {weeks.map((wk, i) =>
           i % 2 === 0 || i === n - 1 ? (
-            <text key={`x${i}`} className="al" x={L + bw * i + bw * 0.5} y={H - 7} textAnchor="middle">
+            <text key={`x${i}`} className="al" x={L + bw * i + bw * 0.5} y={H - 7} textAnchor="middle" pointerEvents="none">
               {wk}
             </text>
           ) : null,
         )}
       </svg>
+      {showTooltip && hoverIdx != null && tipLinesUnique.length ? (
+        <div
+          className="chart-tip"
+          role="tooltip"
+          data-testid="chart-tip"
+          style={{
+            left: `clamp(8px, calc(${tipLeftPct}% - 40px), calc(100% - 120px))`,
+          }}
+        >
+          <div className="chart-tip-wk">{weeks[hoverIdx] || `Week ${hoverIdx + 1}`}</div>
+          {tipLinesUnique.map((ln) => (
+            <div key={ln.label + ln.text} className="chart-tip-row">
+              {ln.text}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {bars.some((b) => b.label) || line?.label ? (
         <div className="lgd" style={{ marginTop: 6 }}>
           {bars.map((b) =>

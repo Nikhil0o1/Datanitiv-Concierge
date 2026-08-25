@@ -179,17 +179,19 @@ def has_roster_gap(plan: LoadedPlan) -> bool:
 
 
 def live_hire12(plan: LoadedPlan) -> float:
-    """Hiring · 12wk from mapped roster actuals (live), else meta/demo."""
+    """Hiring · 12wk from roster actuals/plans (live), else meta/demo."""
     mapped = sum(
-        float(row.actual_hc or 0)
+        float(row.actual_hc or row.plan_hc or 0)
         for row in plan.roster_rows
-        if (row.class_status or "") in ("mapped", "uploaded", "partial")
+        if (row.class_status or "") in ("mapped", "uploaded", "partial", "planned")
     )
     if mapped > 0:
         return mapped
     cls = plan.meta.get("cls") or {}
-    if (cls.get("status") or "") in ("mapped", "uploaded") and cls.get("actual") is not None:
-        return float(cls.get("actual") or 0)
+    if (cls.get("status") or "") in ("mapped", "uploaded", "planned") and (
+        cls.get("actual") is not None or cls.get("plan") is not None
+    ):
+        return float(cls.get("actual") if cls.get("actual") is not None else cls.get("plan") or 0)
     return float(plan.meta.get("hire12", 0) or 0)
 
 

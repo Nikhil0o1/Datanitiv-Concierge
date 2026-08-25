@@ -62,7 +62,10 @@ export const api = {
   programs: () => request('/api/programs'),
   queue: () => request('/api/queue/packages'),
   patchPackage: (id, body) => request(`/api/queue/packages/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  executeQueue: (ids) => request('/api/queue/execute', { method: 'POST', body: JSON.stringify({ package_ids: ids }) }),
+  upsertPackage: (body) =>
+    request('/api/queue/packages/upsert', { method: 'POST', body: JSON.stringify(body) }),
+  executeQueue: (ids) =>
+    request('/api/queue/execute', { method: 'POST', body: JSON.stringify({ package_ids: ids }) }),
   ledger: () => request('/api/ledger'),
   memories: () => request('/api/memories'),
   submitShrinkage: (capId, weeks) =>

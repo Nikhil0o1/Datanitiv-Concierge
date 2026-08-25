@@ -140,6 +140,14 @@ export function useAgentChat({ actionsRef, stateRef, setState, pushRef, isHumanA
       let reply = '';
       let actionList = [];
 
+      const chatMessage =
+        rosterMeta
+          ? [
+              trimmed || 'Please confirm this roster upload.',
+              `[Roster CSV already mapped on ${rosterMeta.cap_id}: file=${rosterMeta.filename}, employees=${rosterMeta.employee_count}, fte=${f2(rosterMeta.total_fte)}, classes=${(rosterMeta.class_refs || []).join('|') || 'n/a'}. Acknowledge in reply; do not emit map_roster again.]`,
+            ].join('\n')
+          : trimmed;
+
       const chatStart = performance.now();
       emit('agent.chat.started', {
         metadata: { source, cap_id: st.activePlan, view: st.view, filter: st.filter },

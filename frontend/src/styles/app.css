@@ -1,4 +1,4 @@
-﻿:root{
+:root{
   --amber:#F5B01A; --amber-d:#8A6100; --amber-m:#FAD277; --amber-s:#FEF4DC;
   --ink:#1C1B18; --bg:#FFFFFF; --surf:#FAF9F6; --surf2:#F2F0EA; --line:#E8E5DD; --line2:#D2CDC1;
   --text:#1C1B18; --muted:#6B665D; --dim:#9A948A;
@@ -238,6 +238,15 @@ table.fl tr.grp-row td{font-weight:700;background:var(--wash)}
 
 /* chart */
 .chart svg{width:100%;display:block;overflow:visible}
+.chart-hit{cursor:crosshair}
+.chart-tip{
+  position:absolute;top:22px;z-index:5;pointer-events:none;
+  background:#2b2f36;color:#fff;font-size:11px;font-weight:600;
+  padding:8px 10px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.18);
+  min-width:88px;max-width:200px;line-height:1.35;
+}
+.chart-tip-wk{opacity:.72;font-size:10px;font-weight:700;margin-bottom:3px;letter-spacing:.02em}
+.chart-tip-row{white-space:nowrap}
 .gl{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}
 .zl{stroke:var(--line2);stroke-width:1.2}
 .al{font-family:'IBM Plex Mono',monospace;font-size:9px;fill:var(--dim)}

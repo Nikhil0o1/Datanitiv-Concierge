@@ -42,10 +42,6 @@ export function tabsForPlan(plan) {
 }
 
 function OverviewTab({ plan }) {
-  const fut = (s) => (s || []).slice(plan.curIdx, plan.curIdx + 12);
-  const shrF = fut(plan.sShrinkPlan);
-  const attrF = fut(plan.sAttrPlan);
-  const hireF = fut(plan.sHire);
   const past = (plan.sOU || []).map((v, i) => (i <= plan.curIdx ? v : null));
   const fu = (plan.sOU || []).map((v, i) => (i >= plan.curIdx ? v : null));
 
@@ -60,17 +56,14 @@ function OverviewTab({ plan }) {
           <div className="kpi">
             <b>{f2(plan.shrink12)}%</b>
             <span>Shrinkage · 12wk</span>
-            <div style={{ marginTop: 4 }}>{sparkMini({ values: shrF, color: '#2a78d6' })}</div>
           </div>
           <div className="kpi">
             <b>{f2(plan.attr12)}%</b>
             <span>Attrition · 12wk</span>
-            <div style={{ marginTop: 4 }}>{sparkMini({ values: attrF, color: '#eb6834' })}</div>
           </div>
           <div className="kpi">
             <b>{f2(plan.hire12)}</b>
             <span>Hiring · 12wk</span>
-            <div style={{ marginTop: 4 }}>{sparkMini({ values: hireF, color: '#1a9e6a' })}</div>
           </div>
           <div className={`kpi ${(plan.ouShrink ?? plan.ou) < 0 ? 'neg' : 'pos'}`}>
             <b>{f2(plan.ouShrink ?? plan.ou)}</b>
@@ -469,11 +462,17 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
   const className = cls.name || cls.className || `TC_2026_${String(plan.capId || '').replace(/\D/g, '')}`;
   const gap = Math.abs(plan.sustained);
   const missingFromRoster = Math.max(0, (cls.plan || 0) - (cls.actual || 0));
-  const mapped = doneRoster || cls.status === 'uploaded' || cls.status === 'mapped';
+  const mapped = doneRoster || ['uploaded', 'mapped', 'planned'].includes(cls.status);
   const countedFte = mapped ? Math.max(cls.actual || 0, 0) : missingFromRoster;
   const realGap = mapped ? Math.max(0, gap - countedFte) : gap;
   const stLabel =
-    mapped ? '✓ Uploaded' : cls.status === 'partial' ? '◑ Partial' : '✕ Not uploaded';
+    cls.status === 'planned'
+      ? '◷ Planned (from Execute)'
+      : mapped
+        ? '✓ Uploaded'
+        : cls.status === 'partial'
+          ? '◑ Partial'
+          : '✕ Not uploaded';
 
   const doQuickMap = () => {
     setUploadNote(`Mapped ${f2(cls.plan)} planned hires for ${className} against Class Reference.`);
@@ -764,10 +763,11 @@ function ShrinkageTab({
           curIdx={plan.curIdx}
           height={200}
           yFmt={(v) => `${Math.round(v)}%`}
+          tooltipUnit="%"
           bars={[{ label: 'Actual', data: past, color: '#2a78d6' }]}
           line={{ label: 'Plan', data: displayLine, color: '#c98aa0' }}
           dragFromIdx={plan.curIdx}
-          snap={0.5}
+          snap={0.05}
           minV={0}
           maxV={95}
           onDragPoint={applyDrag}
@@ -902,6 +902,7 @@ function AttritionTab({ plan, onDecide, onSubmitAttrition }) {
           curIdx={plan.curIdx}
           height={200}
           yFmt={(v) => `${f2(v)}%`}
+          tooltipUnit="%"
           bars={[{ label: 'Actual', data: act, color: '#2a78d6' }]}
           line={{ label: 'Plan', data: pln, color: '#2b2f36', dash: editing ? undefined : '5 4' }}
           dragFromIdx={editing ? plan.curIdx : null}
@@ -982,7 +983,14 @@ function RecommendTab({
   const w = weeks12(plan);
   const [showMod, setShowMod] = useState(false);
   const ovr = decisions?.recOvr || {};
-  const rec = planRec(plan, { otPct: ovr.otPct ?? 5, xr: ovr.xr, starts: ovr.starts, gotBy });
+  const rec = planRec(plan, {
+    otPct: ovr.otPct ?? 5,
+    xr: ovr.xr,
+    starts: ovr.starts,
+    trainWk: ovr.trainWk,
+    nestWk: ovr.nestWk,
+    gotBy,
+  });
   const decision = decisions?.rec;
   const n = fwdCount(plan);
   const weekly = otWeeks?.length === n ? otWeeks : Array(n).fill(defaultOtWeekly(plan, rec.otPct));
@@ -1010,7 +1018,12 @@ function RecommendTab({
             <span>−{f2(rec.xr)} FTE</span>
           </div>
           <div className="mline">
-            <span>③ Hire starts</span>
+            <span>
+              ③ Hire starts
+              {rec.starts > 0
+                ? ` · productive in +${rec.productiveIn} wk (train ${rec.trainWk} + nest ${rec.nestWk})`
+                : ''}
+            </span>
             <span>{rec.starts}</span>
           </div>
           <div className="mline">
@@ -1110,6 +1123,26 @@ function RecommendTab({
                 onChange={(e) => onRecOverride?.({ starts: parseInt(e.target.value, 10) || 0 })}
               />
             </label>
+            <label>
+              Train wk
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={ovr.trainWk ?? rec.trainWk}
+                onChange={(e) => onRecOverride?.({ trainWk: parseInt(e.target.value, 10) || 0 })}
+              />
+            </label>
+            <label>
+              Nest wk
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={ovr.nestWk ?? rec.nestWk}
+                onChange={(e) => onRecOverride?.({ nestWk: parseInt(e.target.value, 10) || 0 })}
+              />
+            </label>
           </div>
         ) : null}
         {showDecide ? (
@@ -1132,7 +1165,8 @@ function RecommendTab({
         <div className={`done ${doneRec ? 'on' : ''}`} id="doneRec">
           <span>✓</span>
           <span>
-            Package accepted · OT {f2(otTotal)} hrs · cross-util {f2(rec.xr)} · hire {rec.starts} · queued
+            Package accepted · OT {f2(otTotal)} hrs · cross-util {f2(rec.xr)} · hire {rec.starts}
+            {rec.starts > 0 ? ` (prod +${rec.productiveIn}wk)` : ''} · queued
           </span>
         </div>
       </div>
