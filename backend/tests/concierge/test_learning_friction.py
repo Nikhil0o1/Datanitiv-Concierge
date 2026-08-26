@@ -4,8 +4,9 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import select
 
-from app.concierge.models import ConciergeEvent, ConciergeIncident, ConciergeSession
+from app.concierge.models import ConciergeEvent, ConciergeIncident, ConciergeNudge, ConciergeSession
 from app.concierge.services.cases import seed_default_cases
 from app.concierge.services.friction_monitor import run_friction_monitor
 from app.concierge.services.incident_presentation import incident_title, ui_actions_for_incident
@@ -53,6 +54,12 @@ async def test_friction_monitor_creates_nudge(db_session):
     count = await run_friction_monitor(session)
     await session.commit()
     assert count >= 1
+    incidents = (
+        await session.execute(select(ConciergeIncident).where(ConciergeIncident.session_id == sid))
+    ).scalars().all()
+    incident_ids = {i.id for i in incidents}
+    nudges = (await session.execute(select(ConciergeNudge))).scalars().all()
+    assert not any(n.incident_id in incident_ids for n in nudges)
 
 
 @pytest.mark.asyncio

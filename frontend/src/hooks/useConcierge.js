@@ -16,6 +16,7 @@ export function useConcierge({ actionsRef, stateRef, setState, isHumanActive, pu
   const [pollMs, setPollMs] = useState(DEFAULT_POLL_MS);
   const seenRef = useRef(new Set());
   const activeRef = useRef(false);
+  const firstLoadRef = useRef(true);
 
   useEffect(() => {
     if (!enabled) return;
@@ -57,9 +58,12 @@ export function useConcierge({ actionsRef, stateRef, setState, isHumanActive, pu
   const refresh = useCallback(async () => {
     if (!enabled || activeRef.current) return;
     activeRef.current = true;
-    setLoading(true);
     try {
-      const data = await api.conciergePendingNudges();
+      const ctx = stateRef?.current;
+      const data = await api.conciergePendingNudges(5, {
+        capId: ctx?.activePlan,
+        view: ctx?.view,
+      });
       const rows = data?.nudges || [];
       setNudges(rows);
       setError(null);
@@ -72,6 +76,7 @@ export function useConcierge({ actionsRef, stateRef, setState, isHumanActive, pu
     } catch (err) {
       setError(err?.message || 'Concierge unavailable');
     } finally {
+      firstLoadRef.current = false;
       setLoading(false);
       activeRef.current = false;
     }

@@ -15,3 +15,5 @@ opentelemetry-sdk>=1.28.0
 opentelemetry-instrumentation-fastapi>=0.49b0
 opentelemetry-instrumentation-sqlalchemy>=0.49b0
 opentelemetry-exporter-otlp-proto-grpc>=1.28.0
+pgvector>=0.3.6
+fastembed>=0.5.0

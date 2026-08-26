@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.concierge.models import ConciergeNudge, ConciergeRecommendation
+from app.concierge.models import ConciergeIncident, ConciergeNudge, ConciergeRecommendation
 from app.concierge.schemas.nudges import NudgeListOut, NudgeOut, SnoozeIn
+from app.concierge.services.context_monitor import ensure_nudge_for_open_plan
 from app.concierge.services.feedback import record_nudge_feedback
+from app.concierge.services.nudge_policy import WFM_INCIDENT_TYPES
 from app.concierge.services.nudges import (
     accept_nudge,
     dismiss_nudge,
@@ -23,10 +25,21 @@ router = APIRouter()
 @router.get("/nudges/pending", response_model=NudgeListOut)
 async def get_pending_nudges(
     limit: int = Query(10, ge=1, le=50),
+    cap_id: str | None = Query(default=None),
+    view: str | None = Query(default=None),
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     session: AsyncSession = Depends(get_db),
 ):
-    rows = await list_pending_nudges(session, limit=limit, user_session_id=x_session_id)
+    if view == "plan" and cap_id and x_session_id:
+        await ensure_nudge_for_open_plan(session, cap_id=cap_id, session_id=x_session_id)
+        await session.commit()
+    rows = await list_pending_nudges(
+        session,
+        limit=limit,
+        user_session_id=x_session_id,
+        cap_id=cap_id,
+        view=view,
+    )
     rec_ids = [n.recommendation_id for n in rows]
     recs = {}
     if rec_ids:
@@ -49,8 +62,12 @@ async def get_nudge_detail(nudge_id: UUID, session: AsyncSession = Depends(get_d
 
 
 @router.post("/nudges/{nudge_id}/shown", response_model=NudgeOut)
-async def post_nudge_shown(nudge_id: UUID, session: AsyncSession = Depends(get_db)):
-    nudge = await mark_nudge_shown(session, nudge_id)
+async def post_nudge_shown(
+    nudge_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+):
+    nudge = await mark_nudge_shown(session, nudge_id, user_session_id=x_session_id)
     if not nudge:
         raise HTTPException(status_code=404, detail="Nudge not found")
     return _to_out(nudge)
@@ -61,9 +78,25 @@ async def post_nudge_accept(nudge_id: UUID, session: AsyncSession = Depends(get_
     nudge = await get_nudge(session, nudge_id)
     if not nudge:
         raise HTTPException(status_code=404, detail="Nudge not found")
-    await record_nudge_feedback(session, nudge_id, "accepted", action_taken=nudge.summary)
+    rec = (
+        await session.execute(
+            select(ConciergeRecommendation).where(ConciergeRecommendation.id == nudge.recommendation_id)
+        )
+    ).scalar_one_or_none()
+    incident = (
+        await session.execute(select(ConciergeIncident).where(ConciergeIncident.id == nudge.incident_id))
+    ).scalar_one_or_none()
+    action_taken = rec.action if rec else nudge.summary
+    wfm_accept = bool(incident and incident.incident_type in WFM_INCIDENT_TYPES)
+    await record_nudge_feedback(
+        session,
+        nudge_id,
+        "accepted",
+        action_taken=action_taken,
+        problem_resolved=True if wfm_accept else None,
+    )
     nudge = await accept_nudge(session, nudge_id)
-    return _to_out(nudge)
+    return _to_out(nudge, rec)
 
 
 @router.post("/nudges/{nudge_id}/dismiss", response_model=NudgeOut)

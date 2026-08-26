@@ -175,6 +175,7 @@ class ConciergeRecommendation(Base):
     program: Mapped[Optional[str]] = mapped_column(String(128))
     domain: Mapped[str] = mapped_column(String(16), default="operational")
     ui_actions: Mapped[list] = mapped_column(JSONB, default=list)
+    model_version_id: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.concierge.models import ConciergeEvent, ConciergeEventQueue
 from app.concierge.services.baselines import update_baselines
-from app.concierge.services.cases import seed_default_cases
+from app.concierge.services.cases import reembed_cases_if_needed, seed_default_cases
+from app.concierge.services.nudges import dismiss_non_wfm_open_nudges
 from app.concierge.services.detection import ensure_default_rules, run_detection
 from app.concierge.services.context_monitor import maybe_nudge_for_user_context
 from app.concierge.services.friction_monitor import run_friction_monitor
@@ -23,7 +24,7 @@ from app.concierge.services.incidents import create_or_update_incident
 from app.concierge.services.learning import purge_stale_events, run_learning_cycle
 from app.concierge.services.metrics import worker_metrics
 from app.concierge.services.portfolio_monitor import run_portfolio_monitor
-from app.concierge.services.nudge_policy import should_nudge_for_detection_event, should_nudge_for_user_context
+from app.concierge.services.nudge_policy import should_nudge_for_detection_event
 from app.concierge.services.sessionization import is_synthetic_session, update_session_for_event
 from app.concierge.services.training import ensure_active_model_version
 from app.database import AsyncSessionLocal
@@ -72,6 +73,8 @@ async def _run_loop() -> None:
     async with AsyncSessionLocal() as session:
         await ensure_default_rules(session)
         await seed_default_cases(session)
+        await dismiss_non_wfm_open_nudges(session)
+        await reembed_cases_if_needed(session)
         await ensure_active_model_version(session)
         await session.commit()
 
@@ -212,6 +215,7 @@ async def _process_batch(batch_size: int = 10) -> int:
                             incident,
                             domain="operational",
                             signals=incident.signals,
+                            user_session_id=event.session_id,
                         )
 
                 await maybe_nudge_for_user_context(session, event)

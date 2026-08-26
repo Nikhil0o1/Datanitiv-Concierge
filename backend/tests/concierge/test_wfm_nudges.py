@@ -11,7 +11,12 @@ from app.concierge.models import ConciergeIncident, ConciergeSession
 
 from app.concierge.services.cases import seed_default_cases
 from app.concierge.services.incidents import upsert_wfm_incident
-from app.concierge.services.nudges import create_nudge_for_recommendation, list_pending_nudges
+from app.concierge.services.nudges import (
+    create_nudge_for_recommendation,
+    dismiss_non_wfm_open_nudges,
+    dismiss_nudge,
+    list_pending_nudges,
+)
 from app.concierge.services.portfolio_monitor import run_portfolio_monitor
 from app.concierge.services.recommendations import generate_recommendations
 from app.concierge.services.wfm_actions import ui_actions_for_wfm_incident
@@ -70,7 +75,21 @@ async def test_wfm_incident_recommendation_and_nudge(db_session):
     assert nudge.cap_id == cap_id
     assert nudge.ui_actions
 
-    pending = await list_pending_nudges(session)
+    sid = f"sess-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    session.add(
+        ConciergeSession(
+            session_id=sid,
+            feature="planning",
+            started_at=now,
+            last_event_at=now,
+            event_count=3,
+            error_count=0,
+            summary={"active_cap_id": cap_id, "view": "plan"},
+        )
+    )
+    await session.commit()
+    pending = await list_pending_nudges(session, user_session_id=sid)
     assert any(n.id == nudge.id for n in pending)
 
 
@@ -146,5 +165,396 @@ async def test_nudges_api_flow(client, db_session):
     assert res.status_code == 200
     assert res.json()["status"] == "accepted"
 
+    from app.concierge.models import ConciergeCase
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as check:
+        cases = (
+            await check.execute(select(ConciergeCase).where(ConciergeCase.incident_id == incident.id))
+        ).scalars().all()
+    assert len(cases) == 1
+    assert cases[0].outcome == "SUCCESS"
+    assert cases[0].incident_id == incident.id
+
     res = await client.get("/api/concierge/nudges/pending", headers={"X-Session-ID": sid})
     assert all(n["id"] != nudge_id for n in res.json()["nudges"])
+
+
+@pytest.mark.asyncio
+async def test_pending_nudges_not_starved_by_higher_priority_noise(db_session):
+    """User-plan WFM nudges must surface even when many other pending cards rank higher."""
+    session = db_session
+    await seed_default_cases(session)
+
+    cap_id = _cap_id()
+    sid = f"sess-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    session.add(
+        ConciergeSession(
+            session_id=sid,
+            feature="planning",
+            started_at=now,
+            last_event_at=now,
+            event_count=3,
+            error_count=0,
+            summary={"active_cap_id": cap_id, "view": "plan"},
+        )
+    )
+
+    for _ in range(20):
+        other_cap = _cap_id()
+        signals = {
+            "cap_id": other_cap,
+            "plan_name": "Noise Plan",
+            "program": "Noise",
+            "sustained": -9.0,
+            "why": "noise",
+        }
+        incident, _ = await upsert_wfm_incident(session, "PLAN_CRITICAL_SHORT", signals)
+        recs = await generate_recommendations(session, incident)
+        rec = recs[0]
+        rec.domain = "wfm"
+        rec.cap_id = other_cap
+        rec.ui_actions = [{"type": "open_plan", "params": {"cap_id": other_cap}}]
+        noise = await create_nudge_for_recommendation(session, incident, rec)
+        if noise:
+            noise.priority = 90
+
+    signals = {"cap_id": cap_id, "plan_name": "CP FTE Based", "program": "ACE Retail", "sustained": -2.0, "why": "fwd"}
+    incident, _ = await upsert_wfm_incident(session, "FORWARD_OU_RISK", signals)
+    recs = await generate_recommendations(session, incident)
+    rec = recs[0]
+    rec.domain = "wfm"
+    rec.cap_id = cap_id
+    rec.ui_actions = [{"type": "open_plan", "params": {"cap_id": cap_id}}]
+    target = await create_nudge_for_recommendation(session, incident, rec)
+    assert target is not None
+    target.priority = 50
+    await session.commit()
+
+    pending = await list_pending_nudges(session, limit=5, user_session_id=sid)
+    assert any(n.id == target.id for n in pending), [n.cap_id for n in pending]
+    assert all(n.cap_id == cap_id for n in pending)
+
+
+@pytest.mark.asyncio
+async def test_reliability_floor_blocks_non_critical(db_session):
+    session = db_session
+    await seed_default_cases(session)
+    cap_id = _cap_id()
+    signals = {"cap_id": cap_id, "plan_name": "Low Rel", "program": "P", "sustained": -2.0, "why": "gap"}
+    incident, _ = await upsert_wfm_incident(session, "PLAN_SUSTAINED_UNDER", signals)
+    recs = await generate_recommendations(session, incident)
+    rec = recs[0]
+    rec.domain = "wfm"
+    rec.cap_id = cap_id
+    rec.reliability_score = 0.2
+    nudge = await create_nudge_for_recommendation(session, incident, rec)
+    assert nudge is None
+
+
+@pytest.mark.asyncio
+async def test_critical_wfm_may_nudge_below_floor(db_session):
+    session = db_session
+    await seed_default_cases(session)
+    cap_id = _cap_id()
+    signals = {"cap_id": cap_id, "plan_name": "Critical", "program": "P", "sustained": -9.0, "why": "crit"}
+    incident, _ = await upsert_wfm_incident(session, "PLAN_CRITICAL_SHORT", signals)
+    recs = await generate_recommendations(session, incident)
+    rec = recs[0]
+    rec.domain = "wfm"
+    rec.cap_id = cap_id
+    rec.reliability_score = 0.2
+    nudge = await create_nudge_for_recommendation(session, incident, rec)
+    assert nudge is not None
+
+
+@pytest.mark.asyncio
+async def test_type_dismissed_twice_stays_quiet(db_session):
+    session = db_session
+    await seed_default_cases(session)
+    cap_id = _cap_id()
+
+    async def _make_nudge():
+        incident = ConciergeIncident(
+            incident_key=f"INC-{uuid.uuid4().hex[:8]}",
+            incident_type="SHRINKAGE_DRIFT",
+            severity="MEDIUM",
+            status="DETECTED",
+            started_at=datetime.now(timezone.utc),
+            affected_feature="shrinkage",
+            cap_id=cap_id,
+            signals={"cap_id": cap_id, "plan_name": "Drift", "program": "P", "shrink_gap": 12.0, "why": "drift"},
+        )
+        session.add(incident)
+        await session.flush()
+        recs = await generate_recommendations(session, incident)
+        rec = recs[0]
+        rec.domain = "wfm"
+        rec.cap_id = cap_id
+        rec.reliability_score = max(rec.reliability_score, 0.8)
+        return incident, await create_nudge_for_recommendation(session, incident, rec)
+
+    _, first = await _make_nudge()
+    assert first is not None, "first nudge should be created"
+    await dismiss_nudge(session, first.id)
+
+    incident2, second = await _make_nudge()
+    assert second is not None, (
+        f"second nudge blocked recs={incident2.id} "
+        f"after one dismiss of type+cap"
+    )
+    await dismiss_nudge(session, second.id)
+
+    _, third = await _make_nudge()
+    assert third is None
+
+
+@pytest.mark.asyncio
+async def test_session_budget_returns_at_most_one_wfm_nudge(db_session):
+    session = db_session
+    await seed_default_cases(session)
+    cap_id = _cap_id()
+    sid = f"sess-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    session.add(
+        ConciergeSession(
+            session_id=sid,
+            feature="planning",
+            started_at=now,
+            last_event_at=now,
+            event_count=3,
+            error_count=0,
+            summary={"active_cap_id": cap_id, "view": "plan"},
+        )
+    )
+    signals = {"cap_id": cap_id, "plan_name": "One", "program": "P", "sustained": -3.0, "why": "under"}
+    incident, _ = await upsert_wfm_incident(session, "PLAN_SUSTAINED_UNDER", signals)
+    recs = await generate_recommendations(session, incident)
+    rec = recs[0]
+    rec.domain = "wfm"
+    rec.cap_id = cap_id
+    await create_nudge_for_recommendation(session, incident, rec)
+    await session.commit()
+
+    pending = await list_pending_nudges(session, limit=10, user_session_id=sid)
+    assert len(pending) <= 1
+
+
+@pytest.mark.asyncio
+async def test_portfolio_view_does_not_nudge(db_session):
+    from app.concierge.models import ConciergeEvent
+    from app.concierge.services.nudge_policy import should_nudge_for_user_context
+
+    session = db_session
+    cap_id = _cap_id()
+    sid = f"sess-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    event = ConciergeEvent(
+        event_id=uuid.uuid4(),
+        timestamp=now,
+        session_id=sid,
+        event_type="view.changed",
+        source="frontend",
+        service="planning-ui",
+        severity="info",
+        metadata_={"to_view": "port", "cap_id": cap_id, "view": "port"},
+    )
+    incident, _ = await upsert_wfm_incident(
+        session,
+        "SHRINKAGE_DRIFT",
+        {"cap_id": cap_id, "plan_name": "X", "program": "P", "shrink_gap": 12.0, "why": "drift"},
+    )
+    session.add(event)
+    await session.flush()
+    assert await should_nudge_for_user_context(session, event=event, incident=incident) is False
+
+
+@pytest.mark.asyncio
+async def test_context_nudge_skips_already_accepted_incident(db_session):
+    from app.concierge.models import ConciergeEvent
+    from app.concierge.services.context_monitor import maybe_nudge_for_user_context
+
+    session = db_session
+    cap_id = _cap_id()
+    sid = f"sess-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    session.add(
+        ConciergeSession(
+            session_id=sid,
+            feature="planning",
+            started_at=now,
+            last_event_at=now,
+            event_count=2,
+            error_count=0,
+            summary={"active_cap_id": cap_id, "view": "plan"},
+        )
+    )
+    accepted, _ = await upsert_wfm_incident(
+        session,
+        "PLAN_CRITICAL_SHORT",
+        {"cap_id": cap_id, "plan_name": "X", "program": "P", "sustained": -12.0, "why": "crit"},
+    )
+    open_inc, _ = await upsert_wfm_incident(
+        session,
+        "SHRINKAGE_DRIFT",
+        {"cap_id": cap_id, "plan_name": "X", "program": "P", "shrink_gap": 14.0, "why": "drift"},
+    )
+    recs = await generate_recommendations(session, accepted)
+    rec = recs[0]
+    rec.domain = "wfm"
+    rec.cap_id = cap_id
+    rec.reliability_score = max(rec.reliability_score or 0, 0.8)
+    first = await create_nudge_for_recommendation(session, accepted, rec)
+    assert first is not None
+    first.status = "accepted"
+    first.accepted_at = now
+    await session.flush()
+
+    event = ConciergeEvent(
+        event_id=uuid.uuid4(),
+        timestamp=now,
+        session_id=sid,
+        event_type="plan.opened",
+        source="frontend",
+        service="planning-ui",
+        severity="info",
+        metadata_={"cap_id": cap_id, "view": "plan", "source": "user"},
+    )
+    session.add(event)
+    await session.flush()
+
+    assert await maybe_nudge_for_user_context(session, event) is True
+    pending = await list_pending_nudges(session, limit=5, user_session_id=sid)
+    assert any(n.incident_id == open_inc.id for n in pending)
+
+
+@pytest.mark.asyncio
+async def test_pending_uses_request_cap_not_stale_session(db_session):
+    session = db_session
+    live_cap = _cap_id()
+    stale_cap = _cap_id()
+    sid = f"sess-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc)
+    session.add(
+        ConciergeSession(
+            session_id=sid,
+            feature="planning",
+            started_at=now,
+            last_event_at=now,
+            event_count=3,
+            error_count=0,
+            summary={"active_cap_id": stale_cap, "view": "plan"},
+        )
+    )
+    incident, _ = await upsert_wfm_incident(
+        session,
+        "PLAN_DECISION_REQUIRED",
+        {"cap_id": live_cap, "plan_name": "Live", "program": "P", "sustained": -4.0, "why": "dec"},
+    )
+    recs = await generate_recommendations(session, incident)
+    rec = recs[0]
+    rec.domain = "wfm"
+    rec.cap_id = live_cap
+    rec.reliability_score = max(rec.reliability_score or 0, 0.8)
+    target = await create_nudge_for_recommendation(session, incident, rec)
+    assert target is not None
+    await session.commit()
+
+    stale = await list_pending_nudges(session, limit=5, user_session_id=sid)
+    assert all(n.cap_id != live_cap for n in stale)
+
+    pending = await list_pending_nudges(session, limit=5, user_session_id=sid, cap_id=live_cap, view="plan")
+    assert any(n.id == target.id for n in pending)
+
+
+@pytest.mark.asyncio
+async def test_dismiss_non_wfm_open_nudges(db_session):
+    from app.concierge.models import ConciergeNudge, ConciergeRecommendation
+
+    session = db_session
+    cap_id = _cap_id()
+    now = datetime.now(timezone.utc)
+    op_incident = ConciergeIncident(
+        incident_key=f"INC-{uuid.uuid4().hex[:8]}",
+        incident_type="API_FAILURE",
+        severity="HIGH",
+        status="DETECTED",
+        started_at=now,
+        affected_feature="api",
+        cap_id=cap_id,
+        signals={"cap_id": cap_id},
+    )
+    wfm_incident = ConciergeIncident(
+        incident_key=f"INC-{uuid.uuid4().hex[:8]}",
+        incident_type="SHRINKAGE_DRIFT",
+        severity="MEDIUM",
+        status="DETECTED",
+        started_at=now,
+        affected_feature="shrinkage",
+        cap_id=cap_id,
+        signals={"cap_id": cap_id},
+    )
+    session.add_all([op_incident, wfm_incident])
+    await session.flush()
+    op_rec = ConciergeRecommendation(
+        incident_id=op_incident.id,
+        cap_id=cap_id,
+        domain="operational",
+        action="Restart pool",
+        rationale="Demo",
+        reliability_score=0.9,
+        reliability_factors={},
+        rank=1,
+    )
+    wfm_rec = ConciergeRecommendation(
+        incident_id=wfm_incident.id,
+        cap_id=cap_id,
+        domain="wfm",
+        action="Revise shrinkage",
+        rationale="Drift",
+        reliability_score=0.8,
+        reliability_factors={},
+        rank=1,
+    )
+    session.add_all([op_rec, wfm_rec])
+    await session.flush()
+    session.add_all(
+        [
+            ConciergeNudge(
+                recommendation_id=op_rec.id,
+                incident_id=op_incident.id,
+                cap_id=cap_id,
+                domain="operational",
+                title="API failure",
+                summary="Demo card",
+                reliability_score=0.9,
+                status="pending",
+            ),
+            ConciergeNudge(
+                recommendation_id=wfm_rec.id,
+                incident_id=wfm_incident.id,
+                cap_id=cap_id,
+                domain="wfm",
+                title="Shrinkage drift",
+                summary="WFM card",
+                reliability_score=0.8,
+                status="pending",
+            ),
+        ]
+    )
+    await session.flush()
+
+    n = await dismiss_non_wfm_open_nudges(session)
+    await session.commit()
+    assert n >= 1
+    leftover = (
+        await session.execute(
+            select(ConciergeNudge).where(
+                ConciergeNudge.status.in_(("pending", "shown")),
+                ConciergeNudge.cap_id == cap_id,
+            )
+        )
+    ).scalars().all()
+    assert len(leftover) == 1
+    assert leftover[0].incident_id == wfm_incident.id

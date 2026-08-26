@@ -34,6 +34,7 @@ async def create_training_example(
         },
         recommendation_text=recommendation.action,
         outcome_label=outcome_label,
+        model_version_id=recommendation.model_version_id,
     )
     session.add(example)
     return example

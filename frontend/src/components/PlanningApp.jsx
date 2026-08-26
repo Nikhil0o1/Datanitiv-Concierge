@@ -254,6 +254,16 @@ export default function PlanningApp({ logoSrc }) {
   }, [loading, state.activePlan, state.activeTab, state.view, state.filter]);
 
   useEffect(() => {
+    if (loading || state.view !== 'plan' || !state.activePlan) return undefined;
+    const t1 = setTimeout(() => concierge.refresh(), 400);
+    const t2 = setTimeout(() => concierge.refresh(), 2500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [loading, state.view, state.activePlan, concierge.refresh]);
+
+  useEffect(() => {
     (async () => {
       try {
         const [rows, tri, progs, cycle, pkg, led, mem] = await Promise.all([
@@ -809,7 +819,7 @@ export default function PlanningApp({ logoSrc }) {
       setState((s) => ({ ...s, filter: prog, view: 'port', focusCap: null }));
     },
     openPlan: (capId) => {
-      emit('plan.opened', { metadata: { cap_id: capId, source: 'user' } });
+      emit('plan.opened', { metadata: { cap_id: capId, source: 'user', view: 'plan' } });
       const p = data.find((r) => r.capId === capId);
       const rosterOk =
         p?.cls?.status === 'mapped' || p?.cls?.status === 'uploaded';
@@ -840,7 +850,7 @@ export default function PlanningApp({ logoSrc }) {
       }
     },
     openTab: (tab) => {
-      emit('tab.changed', { metadata: { cap_id: stateRef.current.activePlan, active_tab: tab } });
+      emit('tab.changed', { metadata: { cap_id: stateRef.current.activePlan, active_tab: tab, view: 'plan' } });
       setState((s) => ({
         ...s,
         view: 'plan',
@@ -919,6 +929,7 @@ export default function PlanningApp({ logoSrc }) {
   };
 
   const handleTabClick = (k) => {
+    emit('tab.changed', { metadata: { cap_id: state.activePlan, active_tab: k, view: 'plan' } });
     setState((s) => ({
       ...s,
       activeTab: k,
@@ -966,7 +977,6 @@ export default function PlanningApp({ logoSrc }) {
               <AgentCursor cursor={engine.cursor} />
               <ConciergeNudgePanel
                 nudges={concierge.nudges}
-                loading={concierge.loading}
                 onShowMe={concierge.acceptAndGuide}
                 onDismiss={concierge.dismissNudge}
                 onSnooze={concierge.snoozeNudge}

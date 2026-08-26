@@ -36,6 +36,8 @@ async def record_feedback(
 
     if feedback.event_type == "accepted":
         rec.status = "accepted"
+        if feedback.problem_resolved:
+            await resolve_incident(session, rec.incident_id, resolved=True)
     elif feedback.event_type == "rejected":
         rec.status = "rejected"
     elif feedback.event_type in ("resolved", "action_taken") and feedback.problem_resolved:
