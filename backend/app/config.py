@@ -8,6 +8,11 @@ _ASYNCPG_UNSUPPORTED_QUERY_PARAMS = frozenset(
 )
 
 
+def _is_render_internal_postgres(host: str) -> bool:
+    """Render private-network Postgres uses short hostnames like dpg-xxxxx-a."""
+    return host.startswith("dpg-") and "." not in host
+
+
 def _normalize_database_url(url: str) -> str:
     """Normalize Postgres URLs for SQLAlchemy asyncpg (Render, Neon, etc.)."""
     if url.startswith("postgres://"):
@@ -27,22 +32,37 @@ def _normalize_database_url(url: str) -> str:
         cleaned_query.append((key, value))
 
     if sslmode and not any(key == "ssl" for key, _ in cleaned_query):
-        if sslmode in {"require", "verify-ca", "verify-full"}:
-            cleaned_query.append(("ssl", "require"))
-        elif sslmode == "prefer":
-            cleaned_query.append(("ssl", "prefer"))
+        host = parsed.hostname or ""
+        # Render internal DB is plaintext on the private network — no TLS query param.
+        if not _is_render_internal_postgres(host):
+            if sslmode in {"require", "verify-ca", "verify-full"}:
+                cleaned_query.append(("ssl", "require"))
+            elif sslmode == "prefer":
+                cleaned_query.append(("ssl", "prefer"))
 
     return urlunparse(parsed._replace(query=urlencode(cleaned_query)))
 
 
 def database_connect_args(url: str) -> dict:
-    """Extra asyncpg connect args for hosted Postgres (Neon, etc.)."""
-    host = urlparse(url).hostname or ""
+    """Extra asyncpg connect args when TLS is required (Neon, etc.)."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    query = dict(parse_qsl(parsed.query))
+
     if host in {"localhost", "127.0.0.1"}:
         return {}
-    if "ssl=" in url:
+
+    # Render internal Postgres — use the Internal Database URL, no SSL.
+    if _is_render_internal_postgres(host):
         return {}
-    return {"ssl": True}
+
+    if "ssl" in query:
+        return {}
+
+    if host.endswith(".neon.tech") or host.endswith(".aws.neon.tech"):
+        return {"ssl": True}
+
+    return {}
 
 
 class Settings(BaseSettings):
