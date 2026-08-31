@@ -62,7 +62,6 @@ async def generate_explanation(
         response = await client.messages.create(
             model=settings.anthropic_model,
             max_tokens=1024,
-            temperature=0.3,
             system=EXPLANATION_PROMPT,
             messages=[
                 {

@@ -58,7 +58,6 @@ async def agent_chat(body: AgentChatRequest, session: AsyncSession = Depends(get
             response = await client.messages.create(
                 model=settings.anthropic_model,
                 max_tokens=2048,
-                temperature=0.75,
                 system=SYSTEM_PROMPT,
                 messages=messages,
             )
