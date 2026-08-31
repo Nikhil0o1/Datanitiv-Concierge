@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.concierge.models import ConciergeIncident, ConciergeRecommendation
 from app.concierge.services.metrics import worker_metrics
+from app.services.usage_tracker import record_llm_usage
 
 logger = logging.getLogger("concierge.llm")
 
@@ -56,6 +58,7 @@ async def generate_explanation(
         "historical_cases": similar_cases[:5],
     }
 
+    t0 = time.perf_counter()
     try:
         worker_metrics.llm_calls += 1
         client = AsyncAnthropic(api_key=settings.anthropic_api_key)
@@ -70,7 +73,14 @@ async def generate_explanation(
                 }
             ],
         )
+        latency_ms = (time.perf_counter() - t0) * 1000
         raw = response.content[0].text if response.content else ""
+        await record_llm_usage(
+            model=settings.anthropic_model,
+            endpoint="concierge.llm.explanation",
+            usage=getattr(response, "usage", None),
+            latency_ms=latency_ms,
+        )
         parsed = _parse_json(raw)
         explanation = _format_explanation(parsed, recommendation)
         recommendation.explanation = explanation
@@ -78,6 +88,12 @@ async def generate_explanation(
         return explanation
     except Exception:
         worker_metrics.llm_failures += 1
+        await record_llm_usage(
+            model=settings.anthropic_model,
+            endpoint="concierge.llm.explanation",
+            success=False,
+            latency_ms=(time.perf_counter() - t0) * 1000,
+        )
         logger.exception("Concierge LLM explanation failed")
         recommendation.explanation_status = "failed"
         recommendation.explanation = _fallback_explanation(incident, recommendation)

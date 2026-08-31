@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { api } from '../api/client';
 import { emit, emitError } from '../lib/telemetry';
 import { loadAllDataRows } from '../utils/planTransform';
+import { preloadFillers } from '../lib/instantFiller';
+import '../styles/app.css';
 import { buildScenarioSteps, SCENARIOS } from '../data/scenarios';
 import { f2, hm } from '../utils/format';
 import { useScenarioEngine } from '../hooks/useScenarioEngine';
 import { useConcierge } from '../hooks/useConcierge';
 import { useVoice } from '../hooks/useVoice';
 import { useAgentWebSocket } from '../hooks/useAgentWebSocket';
+import { useWelcomeMessage } from '../hooks/useWelcomeMessage';
 import AgentCursor from './AgentCursor';
 import AgentAvatar from './AgentAvatar';
 import PlanSearchBar from './PlanSearchBar';
@@ -15,9 +19,45 @@ import { filterPlans, matchesPlanSearch } from '../utils/planSearch';
 import ConciergeNudgePanel from './ConciergeNudgePanel';
 import PlanTabs, { TAB_LABELS, tabsForPlan } from './plan/PlanTabs';
 import PortfolioLanding from './PortfolioLanding';
-import { computeXutil, defaultOtWeekly, fwdCount, hireTiming, planRec, scaleDonorsToXu } from '../utils/planLogic';
+import CreatePlanPanel from './CreatePlanPanel';
+import { computeXutil, defaultOtWeekly, fwdCount, hireTiming, planRecWithWeekly, scaleDonorsToXu } from '../utils/planLogic';
+import {
+  EMPTY_CREATE_PLAN_DRAFT,
+  apiFieldToDraftKey,
+  createPlanPayload,
+  nextCreatePlanField,
+} from '../utils/createPlanFields';
+import { HUE } from '../hooks/scenarioActions';
 
 const SHOW_SCENARIO_REPLAY = false;
+
+function buildStaffingPackage(plan, capId, planDecisions, otWeeksByCap, allPlans) {
+  const ovr = planDecisions[capId]?.recOvr || {};
+  const xutil = computeXutil(allPlans);
+  const n = fwdCount(plan);
+  const weeks = otWeeksByCap[capId];
+  const weekly = weeks?.length === n ? weeks : Array(n).fill(defaultOtWeekly(plan, ovr.otPct ?? 5));
+  const rec = planRecWithWeekly(
+    plan,
+    {
+      otPct: ovr.otPct ?? 5,
+      xr: ovr.xr,
+      starts: ovr.starts,
+      trainWk: ovr.trainWk,
+      nestWk: ovr.nestWk,
+      gotBy: xutil.gotBy,
+    },
+    weekly,
+  );
+  const timing = hireTiming(plan, ovr);
+  const donors = scaleDonorsToXu(xutil.donorsBy?.[capId] || [], rec.xr);
+  const donorNote = donors.length
+    ? ` from ${donors.slice(0, 3).map((d) => d.cap_id).join(', ')}${donors.length > 3 ? '…' : ''}`
+    : '';
+  const hireNote =
+    rec.starts > 0 ? ` · hire ${rec.starts} (prod +${timing.productiveIn}wk)` : ' · hire 0';
+  return { rec, timing, donors, weekly, donorNote, hireNote, otHrs: rec.otHrs };
+}
 
 /** Forward planning horizon: this week through next 12 weeks (same window as shrink12 / Overview). */
 const SHRINK_MAX = 70;
@@ -109,7 +149,7 @@ export default function PlanningApp({ logoSrc }) {
   const [planDecisions, setPlanDecisions] = useState({});
   const [otWeeksByCap, setOtWeeksByCap] = useState({});
   const paneRef = useRef(null);
-  const chatEndRef = useRef(null);
+  const chatTimelineRef = useRef(null);
   const chatFileRef = useRef(null);
   const stateRef = useRef(null);
 
@@ -151,6 +191,15 @@ export default function PlanningApp({ logoSrc }) {
     ledgerAnimated: false,
     memoriesCited: false,
     packages: [],
+    createPlan: {
+      open: false,
+      agentMode: false,
+      draft: EMPTY_CREATE_PLAN_DRAFT(),
+      highlightField: null,
+      openSelect: null,
+      busy: false,
+      error: '',
+    },
   });
   stateRef.current = state;
 
@@ -191,6 +240,19 @@ export default function PlanningApp({ logoSrc }) {
     isHumanActive: engine.isHumanActive,
   });
 
+  useWelcomeMessage({
+    enabled: !loading,
+    cycleLabel,
+    triage,
+    pushRef: engine.pushRef,
+    setState,
+    stateRef,
+    speakText: voice.speakText,
+    voiceBusy: voice.voiceBusy,
+    streamMode,
+    scenarioPlaying: engine.playing,
+  });
+
   const matchesSearch = useCallback((item) => matchesPlanSearch(item, searchQuery), [searchQuery]);
 
   const filteredData = useMemo(
@@ -206,8 +268,9 @@ export default function PlanningApp({ logoSrc }) {
             const row = data.find((d) => d.capId === p.cap_id);
             return row?.program === state.filter;
           });
-    if (!searchQuery.trim()) return base;
-    return base.filter((p) => matchesPlanSearch(p, searchQuery));
+    const active = base.filter((p) => p.status !== 'rejected');
+    if (!searchQuery.trim()) return active;
+    return active.filter((p) => matchesPlanSearch(p, searchQuery));
   }, [state.packages, state.filter, data, searchQuery]);
 
   const refreshPortfolio = useCallback(async () => {
@@ -262,6 +325,10 @@ export default function PlanningApp({ logoSrc }) {
       clearTimeout(t2);
     };
   }, [loading, state.view, state.activePlan, concierge.refresh]);
+
+  useEffect(() => {
+    void preloadFillers();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -326,9 +393,20 @@ export default function PlanningApp({ logoSrc }) {
     }));
   }, [state.activePlan, data]);
 
+  const chatScrollSig = useMemo(() => {
+    const last = state.messages[state.messages.length - 1];
+    return `${state.messages.length}:${last?.text ?? ''}:${state.bubble}:${state.agentTalk}:${state.agentHear}`;
+  }, [state.messages, state.bubble, state.agentTalk, state.agentHear]);
+
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [state.messages.length]);
+    const tl = chatTimelineRef.current;
+    if (!tl) return;
+    const scrollToBottom = () => {
+      tl.scrollTop = tl.scrollHeight;
+    };
+    scrollToBottom();
+    requestAnimationFrame(scrollToBottom);
+  }, [chatScrollSig]);
 
   useEffect(() => {
     if (paneRef.current) paneRef.current.scrollTop = 0;
@@ -562,32 +640,19 @@ export default function PlanningApp({ logoSrc }) {
     const plan = data.find((p) => p.capId === capId);
     if (!plan) return;
 
-    const ovr = planDecisions[capId]?.recOvr || {};
-    const xutil = computeXutil(data);
-    const rec = planRec(plan, {
-      otPct: ovr.otPct ?? 5,
-      xr: ovr.xr,
-      starts: ovr.starts,
-      gotBy: xutil.gotBy,
-    });
-    const donors = scaleDonorsToXu(xutil.donorsBy?.[capId] || [], rec.xr);
-    const timing = hireTiming(plan, ovr);
-    const n = fwdCount(plan);
-    const weeks = otWeeksByCap[capId];
-    const weekly = weeks?.length === n ? weeks : Array(n).fill(defaultOtWeekly(plan, rec.otPct));
-    const otHrs = Number(weekly[0]) || rec.otHrs;
-    const donorNote = donors.length
-      ? ` from ${donors.slice(0, 3).map((d) => d.cap_id).join(', ')}${donors.length > 3 ? '…' : ''}`
-      : '';
-    const hireNote =
-      rec.starts > 0
-        ? ` · hire ${rec.starts} (prod +${timing.productiveIn}wk)`
-        : ' · hire 0';
+    const { rec, timing, donors, weekly, donorNote, hireNote, otHrs } = buildStaffingPackage(
+      plan,
+      capId,
+      planDecisions,
+      otWeeksByCap,
+      data,
+    );
 
     try {
       const pkg = await api.upsertPackage({
         cap_id: capId,
         ot_hrs: otHrs,
+        ot_weeks: weekly.map((v) => Number(v) || 0),
         ot_fte: rec.otFTE,
         xu_fte: rec.xr,
         hire_count: rec.starts,
@@ -601,6 +666,7 @@ export default function PlanningApp({ logoSrc }) {
           cap_id: capId,
           package_id: pkg?.id,
           ot_hrs: otHrs,
+          ot_weeks: weekly,
           ot_fte: rec.otFTE,
           xu_fte: rec.xr,
           hire_count: rec.starts,
@@ -621,7 +687,16 @@ export default function PlanningApp({ logoSrc }) {
             mapped,
           ];
         }
-        return { ...s, doneRec: true, packages };
+        const shownTabs = s.shownTabs.includes('exe') ? s.shownTabs : [...s.shownTabs, 'exe'];
+        return {
+          ...s,
+          doneRec: true,
+          packages,
+          activeTab: 'exe',
+          shownTabs,
+          execDone: false,
+          execMsg: '',
+        };
       });
       setPlanDecisions((d) => ({
         ...d,
@@ -637,12 +712,22 @@ export default function PlanningApp({ logoSrc }) {
     }
   }, [data, planDecisions, otWeeksByCap, setState]);
 
-  const handleRejectRec = useCallback(() => {
+  const handleRejectRec = useCallback(async () => {
     const capId = stateRef.current.activePlan;
+    const pkg = stateRef.current.packages.find(
+      (p) => p.cap_id === capId && !p.done && p.status !== 'posted',
+    );
+    try {
+      if (pkg?.id) await api.patchPackage(pkg.id, { status: 'rejected' });
+    } catch (e) {
+      console.error(e);
+    }
     setState((s) => ({
       ...s,
       doneRec: false,
-      packages: s.packages.map((p) => (p.cap_id === capId ? { ...p, ticked: false } : p)),
+      execDone: false,
+      execMsg: '',
+      packages: s.packages.filter((p) => !(p.cap_id === capId && p.status !== 'posted')),
     }));
     setPlanDecisions((d) => ({
       ...d,
@@ -750,31 +835,24 @@ export default function PlanningApp({ logoSrc }) {
     if (!stateRef.current.doneRec) {
       return { message: 'No approved package yet — accept a recommendation first.' };
     }
-    let match = stateRef.current.packages.find((p) => p.cap_id === capId && !p.done);
+    let match = stateRef.current.packages.find((p) => p.cap_id === capId && !p.done && p.status !== 'rejected');
     if (!match?.id) {
-      // Accept may still be in flight or package missing — try upsert from live rec then execute.
       const plan = data.find((p) => p.capId === capId);
       if (!plan) {
         return { message: `No plan loaded for ${capId}` };
       }
       try {
-        const ovr = planDecisions[capId]?.recOvr || {};
-        const xutil = computeXutil(data);
-        const rec = planRec(plan, {
-          otPct: ovr.otPct ?? 5,
-          xr: ovr.xr,
-          starts: ovr.starts,
-          gotBy: xutil.gotBy,
-        });
-        const donors = scaleDonorsToXu(xutil.donorsBy?.[capId] || [], rec.xr);
-        const timing = hireTiming(plan, ovr);
-        const n = fwdCount(plan);
-        const weeks = otWeeksByCap[capId];
-        const weekly = weeks?.length === n ? weeks : Array(n).fill(defaultOtWeekly(plan, rec.otPct));
-        const otHrs = Number(weekly[0]) || rec.otHrs;
+        const { rec, timing, donors, weekly, otHrs } = buildStaffingPackage(
+          plan,
+          capId,
+          planDecisions,
+          otWeeksByCap,
+          data,
+        );
         match = await api.upsertPackage({
           cap_id: capId,
           ot_hrs: otHrs,
+          ot_weeks: weekly.map((v) => Number(v) || 0),
           ot_fte: rec.otFTE,
           xu_fte: rec.xr,
           hire_count: rec.starts,
@@ -813,6 +891,131 @@ export default function PlanningApp({ logoSrc }) {
     return { message };
   }, [data, planDecisions, otWeeksByCap, setState, refreshPortfolio]);
 
+  const openCreatePlan = useCallback((agentMode = false) => {
+    setState((s) => {
+      const draft = EMPTY_CREATE_PLAN_DRAFT();
+      if (!agentMode && s.filter !== 'all') {
+        draft.program = s.filter;
+      }
+      return {
+        ...s,
+        view: 'port',
+        createPlan: {
+          open: true,
+          agentMode: Boolean(agentMode),
+          draft,
+          highlightField: agentMode ? 'program' : null,
+          openSelect: null,
+          busy: false,
+          error: '',
+        },
+      };
+    });
+  }, [setState]);
+
+  const closeCreatePlan = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      createPlan: {
+        open: false,
+        agentMode: false,
+        draft: EMPTY_CREATE_PLAN_DRAFT(),
+        highlightField: null,
+        openSelect: null,
+        busy: false,
+        error: '',
+      },
+    }));
+  }, [setState]);
+
+  const setCreatePlanField = useCallback((field, value, { finalize = true } = {}) => {
+    const key = apiFieldToDraftKey(field);
+    const nextVal = finalize ? String(value ?? '').trim() : String(value ?? '');
+    flushSync(() => {
+      setState((s) => {
+        const draft = { ...s.createPlan.draft, [key]: nextVal };
+        return {
+          ...s,
+          createPlan: {
+            ...s.createPlan,
+            open: true,
+            draft,
+            highlightField: finalize ? nextCreatePlanField(draft) : key,
+            openSelect: finalize ? null : s.createPlan.openSelect,
+          },
+        };
+      });
+    });
+  }, [setState]);
+
+  const openCreatePlanSelect = useCallback((key) => {
+    flushSync(() => {
+      setState((s) => ({
+        ...s,
+        createPlan: {
+          ...s.createPlan,
+          openSelect: key,
+          highlightField: key,
+        },
+      }));
+    });
+  }, [setState]);
+
+  const closeCreatePlanSelect = useCallback(() => {
+    flushSync(() => {
+      setState((s) => ({
+        ...s,
+        createPlan: { ...s.createPlan, openSelect: null },
+      }));
+    });
+  }, [setState]);
+
+  const submitCreatePlan = useCallback(async () => {
+    const cp = stateRef.current.createPlan;
+    const payload = createPlanPayload(cp.draft);
+    if (!payload.program || !payload.plan_name || !payload.site || !payload.lob) {
+      setState((s) => ({
+        ...s,
+        createPlan: {
+          ...s.createPlan,
+          error: 'Organization, plan name, site, and LOB are required.',
+        },
+      }));
+      return null;
+    }
+    setState((s) => ({ ...s, createPlan: { ...s.createPlan, busy: true, error: '' } }));
+    try {
+      const res = await api.createPlan(payload);
+      emit('plan.created', { metadata: { cap_id: res.cap_id, plan_name: res.plan_name } });
+      setState((s) => ({
+        ...s,
+        createPlan: {
+          open: false,
+          agentMode: false,
+          draft: EMPTY_CREATE_PLAN_DRAFT(),
+          highlightField: null,
+          openSelect: null,
+          busy: false,
+          error: '',
+        },
+      }));
+      await refreshPortfolio();
+      const capId = res.cap_id;
+      setTimeout(() => domHandlersRef.current.openPlan?.(capId), 120);
+      return res;
+    } catch (e) {
+      setState((s) => ({
+        ...s,
+        createPlan: {
+          ...s.createPlan,
+          busy: false,
+          error: e.message || 'Failed to create plan',
+        },
+      }));
+      return null;
+    }
+  }, [refreshPortfolio]);
+
   domHandlersRef.current = {
     setFilter: (prog) => {
       emit('filter.changed', { metadata: { program: prog } });
@@ -823,6 +1026,9 @@ export default function PlanningApp({ logoSrc }) {
       const p = data.find((r) => r.capId === capId);
       const rosterOk =
         p?.cls?.status === 'mapped' || p?.cls?.status === 'uploaded';
+      const queuedPkg = stateRef.current.packages.find(
+        (pkg) => pkg.cap_id === capId && pkg.status === 'queued' && !pkg.done,
+      );
       setState((s) => ({
         ...s,
         view: 'plan',
@@ -835,7 +1041,7 @@ export default function PlanningApp({ logoSrc }) {
         editorReady: true,
         chartOU: { capId, ready: true, mark: 8, lbl: '' },
         chartShr: { capId, ready: true },
-        doneRec: false,
+        doneRec: Boolean(queuedPkg),
         doneShr: false,
         shrDirty: false,
         doneAttr: false,
@@ -843,10 +1049,16 @@ export default function PlanningApp({ logoSrc }) {
         doneRoster: rosterOk,
       }));
       if (p) {
-        setOtWeeksByCap((prev) => ({
-          ...prev,
-          [capId]: prev[capId]?.length === fwdCount(p) ? prev[capId] : Array(fwdCount(p)).fill(defaultOtWeekly(p)),
-        }));
+        setOtWeeksByCap((prev) => {
+          const n = fwdCount(p);
+          if (queuedPkg?.ot_weeks?.length === n) {
+            return { ...prev, [capId]: queuedPkg.ot_weeks.map((v) => Number(v) || 0) };
+          }
+          return {
+            ...prev,
+            [capId]: prev[capId]?.length === n ? prev[capId] : Array(n).fill(defaultOtWeekly(p)),
+          };
+        });
       }
     },
     openTab: (tab) => {
@@ -875,6 +1087,12 @@ export default function PlanningApp({ logoSrc }) {
     clearPackages: handleClearPackages,
     executeSelected: handleExecuteSelected,
     executePlan: handleExecutePlan,
+    openCreatePlan,
+    closeCreatePlan,
+    setCreatePlanField,
+    openCreatePlanSelect,
+    closeCreatePlanSelect,
+    submitCreatePlan,
     togglePackage: (capId) => {
       setState((s) => ({
         ...s,
@@ -1053,7 +1271,32 @@ export default function PlanningApp({ logoSrc }) {
                       }
                     }}
                   />
+                  <button
+                    type="button"
+                    className="btn p btn-new-plan"
+                    data-act="open-create-plan"
+                    onClick={() => {
+                      engine.markHumanActive();
+                      openCreatePlan(false);
+                    }}
+                  >
+                    + New Cap Plan
+                  </button>
                 </div>
+
+                <CreatePlanPanel
+                  open={state.createPlan.open}
+                  draft={state.createPlan.draft}
+                  agentMode={state.createPlan.agentMode}
+                  highlightField={state.createPlan.highlightField}
+                  openSelect={state.createPlan.openSelect}
+                  busy={state.createPlan.busy}
+                  error={state.createPlan.error}
+                  programOptions={programs}
+                  onChange={(key, val) => setCreatePlanField(key, val)}
+                  onSubmit={submitCreatePlan}
+                  onClose={closeCreatePlan}
+                />
 
                 {state.view === 'port' && (
                   <div className="pane on" data-view="port" ref={paneRef}>
@@ -1203,84 +1446,122 @@ export default function PlanningApp({ logoSrc }) {
                 <div className="arl">Planning agent</div>
                 <div className="wv"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
                 <div className="ast" id="ast">{state.agentStatus}</div>
-                <div className="voicebar">
-                  <button
-                    type="button"
-                    className={`mic ${voice.recording ? 'on' : ''} ${voice.voiceBusy ? 'busy' : ''}`}
-                    id="bMic"
-                    title="Click to speak — ElevenLabs STT + Claude"
-                    aria-label="Voice input"
-                    onClick={voice.toggleRecording}
-                    disabled={voice.voiceBusy}
-                  >
-                    {voice.recording ? '⏹' : '🎙'}
-                  </button>
-                  <span className="vhint">{voice.recording ? 'Listening… click to send' : 'Mic, type, or attach CSV'}</span>
-                </div>
-                {chatFile ? (
-                  <div className="chat-file-chip">
-                    <span title={chatFile.name}>📎 {chatFile.name}</span>
-                    <button type="button" aria-label="Remove file" onClick={() => setChatFile(null)}>
-                      ×
-                    </button>
-                  </div>
-                ) : null}
-                <form
-                  className="chat-in"
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    const msg = chatInput.trim();
-                    if ((!msg && !chatFile) || voice.voiceBusy) return;
-                    const file = chatFile;
-                    setChatInput('');
-                    setChatFile(null);
-                    await voice.sendMessage(msg, 'text', { file });
-                  }}
-                >
-                  <input
-                    ref={chatFileRef}
-                    type="file"
-                    accept=".csv,text/csv"
-                    hidden
-                    onChange={(e) => {
-                      const f = e.target.files?.[0] || null;
-                      e.target.value = '';
-                      if (f) setChatFile(f);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="chat-attach"
-                    title="Attach roster CSV"
-                    aria-label="Attach roster CSV"
-                    disabled={voice.voiceBusy}
-                    onClick={() => chatFileRef.current?.click()}
-                  >
-                    📎
-                  </button>
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Ask Vera — or attach sample_roster.csv…"
-                    disabled={voice.voiceBusy}
-                    aria-label="Message Vera"
-                  />
-                  <button
-                    type="submit"
-                    disabled={voice.voiceBusy || (!chatInput.trim() && !chatFile)}
-                    aria-label="Send"
-                  >
-                    →
-                  </button>
-                </form>
               </div>
-              <div className="bub" id="bub">{state.bubble}</div>
-              <div className="tl" id="tl">
-                {state.messages.map((m, i) => (
-                  <div key={i} className={`m ${m.cls}`}><div className="tg"><b style={{ background: m.hue }}></b>{m.tag}</div><div className="bd">{m.text}</div></div>
-                ))}
-                <div ref={chatEndRef} />
+
+              <div className="agent-chat-body">
+                <div className="tl" id="tl" ref={chatTimelineRef}>
+                  {state.messages.map((m, i) => (
+                    <div key={i} className={`m ${m.cls}`}>
+                      <div className="tg">
+                        <b style={{ background: m.hue }}></b>
+                        {m.tag}
+                      </div>
+                      <div className="bd">{m.text}</div>
+                    </div>
+                  ))}
+                  {state.bubble ? (
+                    <div
+                      className={`m v live ${state.agentTalk ? 'speaking' : ''} ${state.agentHear ? 'listening' : ''}`}
+                      aria-live="polite"
+                    >
+                      <div className="tg">
+                        <b style={{ background: HUE.v }}></b>
+                        {state.agentHear ? 'Vera · listening' : state.agentTalk ? 'Vera · speaking' : 'Vera'}
+                      </div>
+                      <div className="bd">
+                        {state.bubble}
+                        {state.agentTalk ? <span className="live-cursor" aria-hidden /> : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="agent-composer-wrap">
+                  {chatFile ? (
+                    <div className="chat-file-chip">
+                      <span title={chatFile.name}>📎 {chatFile.name}</span>
+                      <button type="button" aria-label="Remove file" onClick={() => setChatFile(null)}>
+                        ×
+                      </button>
+                    </div>
+                  ) : null}
+                  <form
+                    className="chat-composer"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const msg = chatInput.trim();
+                      if ((!msg && !chatFile) || voice.voiceBusy) return;
+                      const file = chatFile;
+                      setChatInput('');
+                      setChatFile(null);
+                      await voice.sendMessage(msg, 'text', { file });
+                    }}
+                  >
+                    <input
+                      ref={chatFileRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      hidden
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] || null;
+                        e.target.value = '';
+                        if (f) setChatFile(f);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className={`composer-btn mic ${voice.recording ? 'on' : ''} ${voice.voiceBusy ? 'busy' : ''}`}
+                      id="bMic"
+                      title={voice.recording ? 'Stop and send' : 'Voice input'}
+                      aria-label={voice.recording ? 'Stop recording' : 'Voice input'}
+                      disabled={voice.voiceBusy}
+                      onClick={voice.toggleRecording}
+                    >
+                      {voice.recording ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                          <rect x="6" y="6" width="12" height="12" rx="2" />
+                        </svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                          <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3z" />
+                          <path d="M19 11a7 7 0 0 1-14 0M12 18v3" />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="composer-btn attach"
+                      title="Attach roster CSV"
+                      aria-label="Attach roster CSV"
+                      disabled={voice.voiceBusy}
+                      onClick={() => chatFileRef.current?.click()}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                      </svg>
+                    </button>
+                    <input
+                      type="text"
+                      className="composer-input"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder={voice.recording ? 'Listening…' : 'Ask Vera anything…'}
+                      disabled={voice.voiceBusy}
+                      aria-label="Message Vera"
+                    />
+                    <button
+                      type="submit"
+                      className="composer-send"
+                      disabled={voice.voiceBusy || (!chatInput.trim() && !chatFile)}
+                      aria-label="Send message"
+                      title="Send"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
+                        <path d="M5 12h14M13 6l6 6-6 6" />
+                      </svg>
+                    </button>
+                  </form>
+                </div>
               </div>
             </aside>
 

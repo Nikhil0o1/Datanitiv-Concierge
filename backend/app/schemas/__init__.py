@@ -178,6 +178,35 @@ class PlanningCycleOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CreatePlanRequest(BaseModel):
+    plan_name: str
+    site: str
+    lob: str
+    skill: str | None = None
+    channel: str | None = None
+    planning_period: str | None = None
+    scenario: str | None = "Base"
+    program: str | None = None
+    vertical: str | None = None
+    region: str | None = None
+    planner: str | None = None
+    billable: float | None = None
+    closing_fte: float | None = None
+
+
+class CreatePlanResponse(BaseModel):
+    cap_id: str
+    plan_name: str
+    program: str
+    site: str
+    lob: str
+    skill: str | None = None
+    channel: str | None = None
+    planning_period: str | None = None
+    scenario: str | None = None
+    message: str
+
+
 class DonorLoan(BaseModel):
     cap_id: str
     fte: float
@@ -188,6 +217,7 @@ class ActionPackageOut(BaseModel):
     id: int
     cap_id: str
     ot_hrs: float
+    ot_weeks: list[float] = Field(default_factory=list)
     xu_fte: float
     hire_count: int
     status: str
@@ -215,6 +245,7 @@ class ActionPackagePatch(BaseModel):
 class ActionPackageUpsert(BaseModel):
     cap_id: str
     ot_hrs: float = 0.0
+    ot_weeks: list[float] | None = None
     ot_fte: float | None = None
     xu_fte: float = 0.0
     hire_count: int = 0
@@ -302,6 +333,9 @@ class RosterMapResponse(BaseModel):
 
 class VoiceSTTResponse(BaseModel):
     text: str
+    language_code: str | None = None
+    language_probability: float | None = None
+    transcription_quality: str = "good"
 
 
 class VoiceTTSRequest(BaseModel):

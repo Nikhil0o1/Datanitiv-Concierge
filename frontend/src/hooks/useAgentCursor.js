@@ -15,8 +15,12 @@ export function useAgentCursor(workspaceRef, { wait, getSpeed = () => 1 } = {}) 
     async (selector) => {
       const root = workspaceRef.current;
       if (!root) return null;
+      root.querySelectorAll('.aim').forEach((n) => n.classList.remove('aim'));
       const el = root.querySelector(selector);
       if (!el) return null;
+
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+      await wait(80);
 
       setCursorOn(true);
       const wsRect = root.getBoundingClientRect();

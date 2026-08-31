@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +16,7 @@ from app.concierge.services.worker import start_worker, stop_worker
 from app.database import get_db
 from app.routers import (
     agent,
+    cost,
     cycle,
     health,
     ledger,
@@ -47,6 +49,15 @@ async def lifespan(app: FastAPI):
 
     if settings.concierge_enabled and settings.concierge_worker_enabled:
         await start_worker()
+
+    if settings.elevenlabs_api_key:
+        from app.services.voice_fillers import warm_filler_cache
+
+        asyncio.create_task(warm_filler_cache())
+
+    from app.services.usage_tracker import ensure_usage_table
+
+    await ensure_usage_table()
 
     yield
 
@@ -82,6 +93,7 @@ app.include_router(ledger.router, prefix="/api")
 app.include_router(plan_actions.router, prefix="/api")
 app.include_router(voice.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
+app.include_router(cost.router, prefix="/api")
 app.include_router(websocket.router)
 
 if settings.concierge_enabled:

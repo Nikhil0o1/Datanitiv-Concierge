@@ -35,10 +35,12 @@ async def _package_out(session: AsyncSession, pkg: dict) -> ActionPackageOut:
     train_wk = int(pkg.get("train_wk") if pkg.get("train_wk") is not None else 2)
     nest_wk = int(pkg.get("nest_wk") if pkg.get("nest_wk") is not None else 1)
     hire_lag = int(pkg.get("hire_lag_wk") if pkg.get("hire_lag_wk") is not None else train_wk + nest_wk)
+    ot_weeks = [float(v) for v in (pkg.get("ot_weeks") or [])]
     return ActionPackageOut(
         id=int(pkg["id"]),
         cap_id=pkg["cap_id"],
         ot_hrs=float(pkg["ot_hrs"]),
+        ot_weeks=ot_weeks,
         xu_fte=float(pkg["xu_fte"]),
         hire_count=int(pkg["hire_count"]),
         status=pkg["status"],
@@ -101,6 +103,7 @@ async def upsert_package(body: ActionPackageUpsert, session: AsyncSession = Depe
         hire_note = f" · hire {body.hire_count} (prod +{hire_lag}wk)"
     else:
         hire_note = " · hire 0"
+    ot_weeks = [round(float(v), 2) for v in (body.ot_weeks or []) if v is not None]
     desc = body.description or (
         f"OT {body.ot_hrs:.2f} hrs/wk · loan {body.xu_fte:.2f} FTE{donor_note}{hire_note} · accepted"
     )
@@ -114,6 +117,7 @@ async def upsert_package(body: ActionPackageUpsert, session: AsyncSession = Depe
             "id": next_id,
             "cap_id": body.cap_id,
             "ot_hrs": float(body.ot_hrs),
+            "ot_weeks": ot_weeks,
             "ot_fte": float(body.ot_fte) if body.ot_fte is not None else None,
             "xu_fte": float(body.xu_fte),
             "hire_count": int(body.hire_count),
@@ -128,6 +132,7 @@ async def upsert_package(body: ActionPackageUpsert, session: AsyncSession = Depe
         packages.append(pkg)
     else:
         pkg["ot_hrs"] = float(body.ot_hrs)
+        pkg["ot_weeks"] = ot_weeks
         pkg["ot_fte"] = float(body.ot_fte) if body.ot_fte is not None else None
         pkg["xu_fte"] = float(body.xu_fte)
         pkg["hire_count"] = int(body.hire_count)
