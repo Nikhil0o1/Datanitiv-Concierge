@@ -1,14 +1,48 @@
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+# libpq query params that asyncpg does not accept when passed through the URL.
+_ASYNCPG_UNSUPPORTED_QUERY_PARAMS = frozenset(
+    {"sslmode", "channel_binding", "options", "gssencmode", "krbsrvname"}
+)
 
 
 def _normalize_database_url(url: str) -> str:
-    """Render Postgres provides postgresql://; SQLAlchemy async needs postgresql+asyncpg://."""
+    """Normalize Postgres URLs for SQLAlchemy asyncpg (Render, Neon, etc.)."""
     if url.startswith("postgres://"):
-        return "postgresql+asyncpg://" + url[len("postgres://") :]
-    if url.startswith("postgresql://"):
-        return "postgresql+asyncpg://" + url[len("postgresql://") :]
-    return url
+        url = "postgresql+asyncpg://" + url[len("postgres://") :]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://") :]
+
+    parsed = urlparse(url)
+    sslmode = None
+    cleaned_query: list[tuple[str, str]] = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key == "sslmode":
+            sslmode = value
+            continue
+        if key in _ASYNCPG_UNSUPPORTED_QUERY_PARAMS:
+            continue
+        cleaned_query.append((key, value))
+
+    if sslmode and not any(key == "ssl" for key, _ in cleaned_query):
+        if sslmode in {"require", "verify-ca", "verify-full"}:
+            cleaned_query.append(("ssl", "require"))
+        elif sslmode == "prefer":
+            cleaned_query.append(("ssl", "prefer"))
+
+    return urlunparse(parsed._replace(query=urlencode(cleaned_query)))
+
+
+def database_connect_args(url: str) -> dict:
+    """Extra asyncpg connect args for hosted Postgres (Neon, etc.)."""
+    host = urlparse(url).hostname or ""
+    if host in {"localhost", "127.0.0.1"}:
+        return {}
+    if "ssl=" in url:
+        return {}
+    return {"ssl": True}
 
 
 class Settings(BaseSettings):
