@@ -71,7 +71,22 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/capability"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
+    # USD per million tokens — override to match Anthropic Console pricing for your model
+    anthropic_input_price_per_mtok: float = 3.0
+    anthropic_output_price_per_mtok: float = 15.0
+    anthropic_cache_read_price_per_mtok: float = 0.30
+    anthropic_cache_write_price_per_mtok: float = 3.75
     elevenlabs_api_key: str = ""
+    # Sarah — warm, natural conversational female (override via .env)
+    elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"
+    # eleven_v3_conversational = most natural (Text-to-Dialogue WS); flash = fastest classic TTS
+    elevenlabs_model: str = "eleven_v3_conversational"
+    elevenlabs_stt_model: str = "scribe_v2"
+    elevenlabs_stt_language: str = "en"
+    elevenlabs_voice_stability: float = 0.42
+    elevenlabs_voice_similarity: float = 0.78
+    elevenlabs_voice_style: float = 0.52
+    elevenlabs_voice_speed: float = 0.97
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
     # Concierge configuration
@@ -107,6 +122,16 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def elevenlabs_voice_settings(self) -> dict:
+        return {
+            "stability": self.elevenlabs_voice_stability,
+            "similarity_boost": self.elevenlabs_voice_similarity,
+            "style": self.elevenlabs_voice_style,
+            "speed": self.elevenlabs_voice_speed,
+            "use_speaker_boost": True,
+        }
 
     @property
     def reliability_weights(self) -> dict[str, float]:

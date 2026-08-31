@@ -1,8 +1,9 @@
 import { api } from '../api/client';
 import { directFromSelector, fireAgentTarget } from '../lib/agentTarget';
 import { hm } from '../utils/format';
+import { apiFieldToDraftKey, isCreatePlanSelectKey } from '../utils/createPlanFields';
 
-export const HUE = { u: '#1C1B18', a: '#F5B01A', d: '#C4463C', s: '#3B6FB5' };
+export const HUE = { u: '#1C1B18', v: '#F5B01A', a: '#F5B01A', d: '#C4463C', s: '#3B6FB5' };
 
 export function createScenarioActions({
   setState,
@@ -16,6 +17,27 @@ export function createScenarioActions({
   shouldUseCursor = () => true,
 }) {
   const useCursor = () => Boolean(cursor && shouldUseCursor());
+
+  const waitPaint = () =>
+    new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
+  const agentTap = async (selector, onFire, logMsg) => {
+    const handlers = domHandlersRef?.current;
+    if (useCursor()) {
+      cursor?.show?.();
+      const ok = await cursor.tap(selector, onFire);
+      if (!ok && onFire) onFire();
+    } else if (onFire) {
+      onFire();
+      await wait(200);
+    } else if (handlers) {
+      directFromSelector(selector, handlers);
+      await wait(200);
+    }
+    if (logMsg) await push('a', 'Agent · action', logMsg);
+  };
 
   const tap = async (selector, logMsg) => {
     const handlers = domHandlersRef?.current;
@@ -73,20 +95,25 @@ export function createScenarioActions({
       }
     },
     openPlan: async (capId) => {
-      if (useCursor()) cursor?.show?.();
-      // Prefer new landing rows; fall back to legacy .row
-      const sel = `.land-row[data-cap="${capId}"] .open-mini, .land-row[data-cap="${capId}"], .row[data-cap="${capId}"]`;
-      await tap(sel, `opened ${capId}`);
-      // Ensure open even if DOM tap missed (landing expand vs open)
       domHandlersRef?.current?.openPlan?.(capId);
+      await wait(80);
+      if (useCursor()) {
+        cursor?.show?.();
+        const sel = `.land-row[data-cap="${capId}"] .open-mini, .land-row[data-cap="${capId}"], .row[data-cap="${capId}"]`;
+        await tap(sel, `opened ${capId}`);
+      }
     },
     markTabs: async (tabs) => {
       setState((s) => ({ ...s, shownTabs: tabs, activeTab: tabs[0] || 'ov' }));
       await wait(350);
     },
     openTab: async (tab) => {
-      if (useCursor()) cursor?.show?.();
-      await tap(`[data-tab="${tab}"]`, `opened tab · ${tab}`);
+      domHandlersRef?.current?.openTab?.(tab);
+      await wait(80);
+      if (useCursor()) {
+        cursor?.show?.();
+        await tap(`[data-tab="${tab}"]`, `opened tab · ${tab}`);
+      }
     },
     drawOUChart: async (capId, opt) => {
       setState((s) => ({ ...s, chartOU: { capId, ...opt, ready: true } }));
@@ -188,6 +215,62 @@ export function createScenarioActions({
       if (useCursor()) cursor?.show?.();
       await tap('[data-act="exec"]', 'executed · packages posted to CAP-ABILITY');
     },
+    openCreatePlanWizard: async () => {
+      if (useCursor()) {
+        cursor?.show?.();
+        await tap('[data-act="open-create-plan"]', 'opened new CAP plan form');
+      } else {
+        domHandlersRef?.current?.openCreatePlan?.(true);
+      }
+    },
+    setCreatePlanField: async (field, value) => {
+      const key = apiFieldToDraftKey(field);
+      const str = String(value ?? '').trim();
+      const handlers = domHandlersRef?.current;
+      const isSelect = isCreatePlanSelectKey(key);
+
+      if (!useCursor()) {
+        handlers?.setCreatePlanField?.(field, str, { finalize: true });
+        return;
+      }
+
+      cursor?.show?.();
+
+      if (isSelect) {
+        await agentTap(`[data-create-select-trigger="${key}"]`, () => {
+          handlers?.openCreatePlanSelect?.(key);
+        });
+        await waitPaint();
+        await wait(120);
+        const optSel = `[data-create-option="${key}"][data-option-value="${CSS.escape(str)}"]`;
+        await agentTap(optSel, () => {
+          handlers?.setCreatePlanField?.(field, str, { finalize: true });
+          handlers?.closeCreatePlanSelect?.();
+        }, `filled · ${key}`);
+        return;
+      }
+
+      await agentTap(`[data-create-input="${key}"]`, () => {}, null);
+      await wait(100);
+      for (let i = 1; i <= str.length; i++) {
+        handlers?.setCreatePlanField?.(field, str.slice(0, i), { finalize: false });
+        await wait(42);
+      }
+      handlers?.setCreatePlanField?.(field, str, { finalize: true });
+      await push('a', 'Agent · action', `filled · ${key}`);
+    },
+    submitCreatePlanWizard: async () => {
+      if (useCursor()) {
+        cursor?.show?.();
+        const btn = document.querySelector('[data-act="submit-create-plan"]');
+        if (btn) {
+          await tap('[data-act="submit-create-plan"]', 'created new CAP plan');
+        } else {
+          await tap('[data-create-field="scenario"] input, [data-create-field="scenario"] select', 'creating plan');
+        }
+      }
+      await domHandlersRef?.current?.submitCreatePlan?.();
+    },
     fillLedger: async () => {
       if (useCursor()) {
         domHandlersRef?.current?.view?.('time');
@@ -200,6 +283,22 @@ export function createScenarioActions({
       await wait(900);
     },
   };
+}
+
+export const CREATE_PLAN_ACTION_TYPES = new Set([
+  'open_create_plan',
+  'set_create_plan_field',
+  'submit_create_plan',
+]);
+
+export function partitionAgentActions(actionList) {
+  const createPlan = [];
+  const other = [];
+  for (const act of actionList || []) {
+    if (CREATE_PLAN_ACTION_TYPES.has(act?.type)) createPlan.push(act);
+    else other.push(act);
+  }
+  return { createPlan, other };
 }
 
 /**
@@ -272,6 +371,17 @@ export async function applyAgentActions(actions, actionList, setState, stateRef,
         break;
       case 'view':
         if (p.view) await actions.view(p.view);
+        break;
+      case 'open_create_plan':
+        await actions.openCreatePlanWizard();
+        break;
+      case 'set_create_plan_field':
+        if (p.field != null && p.value != null) {
+          await actions.setCreatePlanField(p.field, p.value);
+        }
+        break;
+      case 'submit_create_plan':
+        await actions.submitCreatePlanWizard();
         break;
       default:
         break;

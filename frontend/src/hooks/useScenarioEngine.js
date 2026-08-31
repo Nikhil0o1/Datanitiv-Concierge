@@ -70,7 +70,7 @@ export function useScenarioEngine(state, setState, { workspaceRef, domHandlersRe
         setState((s) => ({ ...s, bubble: words.slice(0, i).join(' ') }));
       }
       setState((s) => ({ ...s, agentTalk: false, agentStatus: 'Standing by', bubble: '' }));
-      await push('a', 'Vera', text);
+      await push('v', 'Vera', text);
       await wait(220);
     },
     [push, setState, wait],

@@ -11,6 +11,8 @@ export function fireAgentTarget(el, handlers) {
     else if (act === 'sel-all') handlers.selectAllPackages?.();
     else if (act === 'sel-none') handlers.clearPackages?.();
     else if (act === 'exec') handlers.executeSelected?.();
+    else if (act === 'open-create-plan') handlers.openCreatePlan?.(true);
+    else if (act === 'submit-create-plan') handlers.submitCreatePlan?.();
     else if (act === 'open-detail') {
       const capId = el.closest?.('[data-cap]')?.getAttribute('data-cap') || el.getAttribute('data-cap');
       if (capId) handlers.openPlan?.(capId);
@@ -82,5 +84,7 @@ export function directFromSelector(selector, handlers) {
   if (selector.includes('data-act="go-shrink"')) return handlers.submitShrinkage?.();
   if (selector.includes('data-act="go-roster"')) return handlers.mapRoster?.();
   if (selector.includes('data-act="go-accept"')) return handlers.acceptRec?.();
+  if (selector.includes('data-act="open-create-plan"')) return handlers.openCreatePlan?.(true);
+  if (selector.includes('data-act="submit-create-plan"')) return handlers.submitCreatePlan?.();
   return false;
 }

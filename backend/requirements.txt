@@ -6,6 +6,7 @@ alembic>=1.14.0
 pydantic-settings>=2.6.0
 python-dotenv>=1.0.1
 httpx>=0.28.0
+websockets>=13.0
 anthropic>=0.42.0,<2.0.0
 python-multipart>=0.0.18
 pytest>=8.3.0

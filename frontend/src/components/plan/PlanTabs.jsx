@@ -10,6 +10,9 @@ import {
   kpiTrends,
   ouColor,
   planRec,
+  planRecWithWeekly,
+  recBaseline,
+  recBenefitSummary,
   segmentShrinkage,
   shrRec,
   statusOf,
@@ -1090,6 +1093,23 @@ function AttritionTab({
   );
 }
 
+function RecDiffRow({ label, before, after, unit = '', decimals = 2, emphasize = false }) {
+  const fmt = (v) => (decimals === 0 ? String(Math.round(Number(v) || 0)) : f2(v));
+  const bNum = Number(before) || 0;
+  const aNum = Number(after) || 0;
+  const changed = Math.abs(bNum - aNum) > (decimals === 0 ? 0.5 : 0.01);
+  return (
+    <div className={`rec-diff-row ${changed ? 'changed' : ''} ${emphasize ? 'emph' : ''}`}>
+      <span className="rec-diff-label">{label}</span>
+      <span className="rec-diff-before">{changed ? `${fmt(bNum)}${unit}` : '—'}</span>
+      <span className="rec-diff-arrow" aria-hidden>
+        →
+      </span>
+      <span className="rec-diff-after">{`${fmt(aNum)}${unit}`}</span>
+    </div>
+  );
+}
+
 function RecommendTab({
   plan,
   doneRoster,
@@ -1106,74 +1126,145 @@ function RecommendTab({
   const w = weeks12(plan);
   const [showMod, setShowMod] = useState(false);
   const ovr = decisions?.recOvr || {};
-  const rec = planRec(plan, {
-    otPct: ovr.otPct ?? 5,
-    xr: ovr.xr,
-    starts: ovr.starts,
-    trainWk: ovr.trainWk,
-    nestWk: ovr.nestWk,
-    gotBy,
-  });
   const decision = decisions?.rec;
   const n = fwdCount(plan);
+  const baseline = recBaseline(plan);
+  const rec = planRecWithWeekly(
+    plan,
+    {
+      otPct: ovr.otPct ?? 5,
+      xr: ovr.xr,
+      starts: ovr.starts,
+      trainWk: ovr.trainWk,
+      nestWk: ovr.nestWk,
+      gotBy,
+    },
+    otWeeks?.length === n ? otWeeks : null,
+  );
   const weekly = otWeeks?.length === n ? otWeeks : Array(n).fill(defaultOtWeekly(plan, rec.otPct));
   const otTotal = weekly.reduce((a, b) => a + (Number(b) || 0), 0);
   const labels = plan.weeks.slice(plan.curIdx, plan.curIdx + n);
+  const benefit = recBenefitSummary(plan, rec, baseline);
+  const dismissed = decision === 'rej';
 
   let body;
   if (st === 'under' || st === 'critical') {
     body = (
       <>
-        <div className="slabel">Recommended package — ① OT → ② cross-util → ③ hire</div>
-        <div className="math">
-          <div className="mline">
-            <span>12-wk gap</span>
-            <span>{f2(rec.gap)} FTE</span>
-          </div>
-          <div className="mline">
-            <span>
-              ① OT · {f2(rec.otHrs)} hrs/wk ({f2(rec.otPct)}% of avail)
-            </span>
-            <span>−{f2(rec.otFTE)} FTE</span>
-          </div>
-          <div className="mline add">
-            <span>② Cross-util in</span>
-            <span>−{f2(rec.xr)} FTE</span>
-          </div>
-          <div className="mline">
-            <span>
-              ③ Hire starts
-              {rec.starts > 0
-                ? ` · productive in +${rec.productiveIn} wk (train ${rec.trainWk} + nest ${rec.nestWk})`
-                : ''}
-            </span>
-            <span>{rec.starts}</span>
-          </div>
-          <div className="mline">
-            <span>Residual</span>
-            <span>{f2(rec.residual)} FTE</span>
-          </div>
+        <div className="rec-diff-head">
+          <span className="rec-diff-col">Current</span>
+          <span className="rec-diff-col rec-diff-col-after">Recommended</span>
         </div>
-        <div className="slabel" style={{ marginTop: 10 }}>
-          ✎ Modify OT by week (hrs)
+        <div className="rec-diff">
+          <RecDiffRow label="12-wk staffing gap" before={baseline.gap} after={rec.residual} unit=" FTE" emphasize />
+          <RecDiffRow
+            label="OT (avg weekly)"
+            before={baseline.otHrs}
+            after={rec.otHrs}
+            unit=" hrs/wk"
+          />
+          <RecDiffRow label="OT capacity" before={baseline.otFTE} after={rec.otFTE} unit=" FTE" />
+          <RecDiffRow label="Cross-util in" before={baseline.xr} after={rec.xr} unit=" FTE" />
+          <RecDiffRow
+            label="New hire starts"
+            before={baseline.starts}
+            after={rec.starts}
+            unit=""
+            decimals={0}
+          />
+          {rec.starts > 0 ? (
+            <div className="rec-diff-note">
+              Hires productive in <b>+{rec.productiveIn} wk</b> (train {rec.trainWk} + nest {rec.nestWk})
+            </div>
+          ) : null}
         </div>
-        <div className="otgrid">
-          {weekly.map((v, i) => (
-            <label key={labels[i] || i} className="otwk">
-              <span>{labels[i]}</span>
-              <input
-                type="number"
-                min="0"
-                step="5"
-                value={Number(v).toFixed(2)}
-                onChange={(e) => onOtWeekChange?.(i, parseFloat(e.target.value) || 0)}
-              />
-            </label>
-          ))}
+        <div className="insight info rec-benefit">
+          <b>Why accept:</b> {benefit}
         </div>
-        <div className="dragnote">
-          Total OT: <b>{f2(otTotal)} hrs</b> across {n} week(s)
-        </div>
+        {showMod ? (
+          <div className="rec-mod-panel" data-act="rec-mod-panel">
+            <div className="slabel">Adjust package levers</div>
+            <div className="rec-mod">
+              <label>
+                OT %
+                <input
+                  type="number"
+                  min="0"
+                  max="20"
+                  step="0.5"
+                  value={ovr.otPct ?? 5}
+                  onChange={(e) => {
+                    const pct = parseFloat(e.target.value) || 0;
+                    onRecOverride?.({ otPct: pct });
+                    const hrs = defaultOtWeekly(plan, pct);
+                    for (let i = 0; i < n; i += 1) onOtWeekChange?.(i, hrs);
+                  }}
+                />
+              </label>
+              <label>
+                Cross-util FTE
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={ovr.xr ?? rec.xr}
+                  onChange={(e) => onRecOverride?.({ xr: parseFloat(e.target.value) || 0 })}
+                />
+              </label>
+              <label>
+                Hire starts
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={ovr.starts ?? rec.starts}
+                  onChange={(e) => onRecOverride?.({ starts: parseInt(e.target.value, 10) || 0 })}
+                />
+              </label>
+              <label>
+                Train wk
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={ovr.trainWk ?? rec.trainWk}
+                  onChange={(e) => onRecOverride?.({ trainWk: parseInt(e.target.value, 10) || 0 })}
+                />
+              </label>
+              <label>
+                Nest wk
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={ovr.nestWk ?? rec.nestWk}
+                  onChange={(e) => onRecOverride?.({ nestWk: parseInt(e.target.value, 10) || 0 })}
+                />
+              </label>
+            </div>
+            <div className="slabel" style={{ marginTop: 10 }}>
+              OT by week (hrs)
+            </div>
+            <div className="otgrid">
+              {weekly.map((v, i) => (
+                <label key={labels[i] || i} className="otwk">
+                  <span>{labels[i]}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="5"
+                    value={Number(v).toFixed(2)}
+                    onChange={(e) => onOtWeekChange?.(i, parseFloat(e.target.value) || 0)}
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="dragnote">
+              Total OT: <b>{f2(otTotal)} hrs</b> across {n} week(s) · avg{' '}
+              <b>{f2(rec.otHrs)} hrs/wk</b> ({f2(rec.otPct)}% of avail)
+            </div>
+          </div>
+        ) : null}
       </>
     );
   } else if (w.under >= 2) {
@@ -1202,7 +1293,23 @@ function RecommendTab({
     );
   }
 
-  const showDecide = st === 'under' || st === 'critical' || w.under >= 2 || st === 'surplus';
+  const showDecide = (st === 'under' || st === 'critical' || w.under >= 2 || st === 'surplus') && !dismissed;
+
+  if (dismissed && (st === 'under' || st === 'critical')) {
+    return (
+      <div className="tsec on" data-sec="rec">
+        <div className="card in">
+          <div className="ch">
+            <b>Staffing recommendation</b>
+            <span className="tag">dismissed</span>
+          </div>
+          <div className="insight warn">
+            Recommendation dismissed for this cycle. Re-open by refreshing the plan or asking Vera to re-run staffing.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="tsec on" data-sec="rec">
@@ -1213,61 +1320,6 @@ function RecommendTab({
         </div>
         {doneRoster ? <p style={{ fontSize: '.78rem', color: 'var(--dim)' }}>Roster mapped — gap adjusted before packaging.</p> : null}
         {body}
-        {showMod ? (
-          <div className="rec-mod" data-act="rec-mod-panel">
-            <label>
-              OT %
-              <input
-                type="number"
-                min="0"
-                max="20"
-                step="0.5"
-                value={ovr.otPct ?? 5}
-                onChange={(e) => onRecOverride?.({ otPct: parseFloat(e.target.value) || 0 })}
-              />
-            </label>
-            <label>
-              Cross-util FTE
-              <input
-                type="number"
-                min="0"
-                step="0.1"
-                value={ovr.xr ?? rec.xr}
-                onChange={(e) => onRecOverride?.({ xr: parseFloat(e.target.value) || 0 })}
-              />
-            </label>
-            <label>
-              Hire starts
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={ovr.starts ?? rec.starts}
-                onChange={(e) => onRecOverride?.({ starts: parseInt(e.target.value, 10) || 0 })}
-              />
-            </label>
-            <label>
-              Train wk
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={ovr.trainWk ?? rec.trainWk}
-                onChange={(e) => onRecOverride?.({ trainWk: parseInt(e.target.value, 10) || 0 })}
-              />
-            </label>
-            <label>
-              Nest wk
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={ovr.nestWk ?? rec.nestWk}
-                onChange={(e) => onRecOverride?.({ nestWk: parseInt(e.target.value, 10) || 0 })}
-              />
-            </label>
-          </div>
-        ) : null}
         {showDecide ? (
           <div className="acts" style={{ marginTop: 12 }}>
             <div className="btn p" data-act="go-accept" onClick={onAccept}>
@@ -1281,15 +1333,15 @@ function RecommendTab({
               {showMod ? 'Hide modify' : '✎ Modify'}
             </div>
             <div className="btn g" data-act="rec-rej" onClick={onReject}>
-              ✕ Reject
+              ✕ Dismiss
             </div>
           </div>
         ) : null}
         <div className={`done ${doneRec ? 'on' : ''}`} id="doneRec">
           <span>✓</span>
           <span>
-            Package accepted · OT {f2(otTotal)} hrs · cross-util {f2(rec.xr)} · hire {rec.starts}
-            {rec.starts > 0 ? ` (prod +${rec.productiveIn}wk)` : ''} · queued
+            Package accepted · OT {f2(otTotal)} hrs ({f2(rec.otHrs)}/wk) · cross-util {f2(rec.xr)} · hire {rec.starts}
+            {rec.starts > 0 ? ` (prod +${rec.productiveIn}wk)` : ''} · queued for Execute
           </span>
         </div>
       </div>
@@ -1297,16 +1349,32 @@ function RecommendTab({
   );
 }
 
-function ExecuteTab({ plan, doneRec, otWeeks, gotBy, onOpenQueue, onExecutePlan, execDone, execMsg }) {
-  const rec = planRec(plan, { gotBy });
+function ExecuteTab({ plan, doneRec, otWeeks, gotBy, decisions, onOpenQueue, onExecutePlan, execDone, execMsg }) {
+  const ovr = decisions?.recOvr || {};
   const n = fwdCount(plan);
   const weekly = otWeeks?.length === n ? otWeeks : Array(n).fill(defaultOtWeekly(plan));
+  const rec = planRecWithWeekly(
+    plan,
+    {
+      otPct: ovr.otPct ?? 5,
+      xr: ovr.xr,
+      starts: ovr.starts,
+      trainWk: ovr.trainWk,
+      nestWk: ovr.nestWk,
+      gotBy,
+    },
+    doneRec ? weekly : null,
+  );
   const otTotal = doneRec ? weekly.reduce((a, b) => a + (Number(b) || 0), 0) : 0;
   const [localMsg, setLocalMsg] = useState('');
+  const [execBusy, setExecBusy] = useState(false);
 
   useEffect(() => {
     setLocalMsg('');
   }, [plan.capId]);
+
+  const resultMsg = execMsg || localMsg;
+  const resultOk = execDone || (resultMsg && /posted|applied|\+.*fte/i.test(resultMsg));
 
   return (
     <div className="tsec on" data-sec="exe">
@@ -1333,8 +1401,8 @@ function ExecuteTab({ plan, doneRec, otWeeks, gotBy, onOpenQueue, onExecutePlan,
           <p>Accept a recommendation first, then tick packages in the portfolio queue — or execute this plan&apos;s package here.</p>
         ) : (
           <div className="insight info">
-            <b>{plan.capId}</b> {plan.plan} · OT {f2(otTotal)} hrs · cross-util +{f2(rec.xr)} · hire {rec.starts} ·{' '}
-            <span className="pos-t">accepted</span>
+            <b>{plan.capId}</b> {plan.plan} · OT {f2(rec.otHrs)} hrs/wk ({f2(otTotal)} total) · cross-util +{f2(rec.xr)} · hire{' '}
+            {rec.starts} · <span className="pos-t">accepted</span>
           </div>
         )}
         <div className="acts">
@@ -1342,23 +1410,28 @@ function ExecuteTab({ plan, doneRec, otWeeks, gotBy, onOpenQueue, onExecutePlan,
             Open action queue
           </div>
           <div
-            className="btn g"
+            className={`btn g ${execBusy ? 'busy' : ''}`}
             data-act="exec-sim"
             onClick={async () => {
               if (!doneRec) {
                 setLocalMsg('No approved package yet — accept a recommendation first.');
                 return;
               }
-              const res = await onExecutePlan?.();
-              setLocalMsg(res?.message || 'Posted package to CAP-ABILITY.');
+              setExecBusy(true);
+              try {
+                const res = await onExecutePlan?.();
+                setLocalMsg(res?.message || 'Staffing applied to this CAP plan.');
+              } finally {
+                setExecBusy(false);
+              }
             }}
           >
-            Execute selected →
+            {execBusy ? 'Executing…' : 'Execute → post to plan'}
           </div>
         </div>
-        {(execDone || localMsg || execMsg) ? (
-          <div className={`insight ${doneRec && (execDone || execMsg) ? 'pos' : 'warn'}`} data-act="exec-result">
-            <b>{execDone ? 'Posted.' : ''}</b> {execMsg || localMsg || 'Package posted to CAP-ABILITY (demo store).'}
+        {resultMsg ? (
+          <div className={`insight exec-result ${resultOk ? 'pos' : 'warn'}`} data-act="exec-result">
+            <b>{resultOk ? 'Executed.' : 'Could not execute.'}</b> {resultMsg}
           </div>
         ) : null}
       </div>
@@ -1455,6 +1528,7 @@ export default function PlanTabs({
           doneRec={state.doneRec}
           otWeeks={otWeeks}
           gotBy={gotBy}
+          decisions={decisions}
           onOpenQueue={onOpenQueue}
           onExecutePlan={onExecutePlan}
           execDone={state.execDone}

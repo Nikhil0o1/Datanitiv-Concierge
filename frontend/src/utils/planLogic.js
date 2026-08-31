@@ -248,6 +248,102 @@ export function defaultOtWeekly(plan, otPct = 5) {
   return Math.round(((otPct / 100) * (plan.closingFTE || 0) * (plan.availHrs || 40)) * 100) / 100;
 }
 
+/** Current plan staffing levers before accepting a package. */
+export function recBaseline(plan) {
+  const cur = plan.curIdx || 0;
+  const fwdHire = (plan.sHire || []).slice(cur, cur + 12);
+  const plannedStarts = fwdHire.length
+    ? Math.round(fwdHire.reduce((a, b) => a + (Number(b) || 0), 0) * 100) / 100
+    : 0;
+  const gap = Math.max(0, -(Number(plan.sustained) || 0));
+  return {
+    gap,
+    otHrs: 0,
+    otFTE: 0,
+    otPct: 0,
+    xr: 0,
+    starts: plannedStarts,
+    residual: gap,
+    sustained: Number(plan.sustained) || 0,
+  };
+}
+
+/** Derive OT FTE / avg hrs from per-week OT hour inputs. */
+export function otMetricsFromWeekly(weekly, plan) {
+  const n = Math.max(1, weekly?.length || 1);
+  const avail = Number(plan.availHrs) || 40;
+  const closing = Number(plan.closingFTE) || 0;
+  const total = (weekly || []).reduce((a, b) => a + (Number(b) || 0), 0);
+  const avgHrs = Math.round((total / n) * 100) / 100;
+  const otFTE = Math.round((avgHrs / avail) * 100) / 100;
+  const otPct =
+    closing && avail
+      ? Math.round((avgHrs / (closing * avail)) * 10000) / 100
+      : 0;
+  return { avgHrs, otFTE, otPct, total: Math.round(total * 100) / 100, n };
+}
+
+/** planRec with optional per-week OT overrides (Modify flow). */
+export function planRecWithWeekly(plan, opts = {}, weekly = null) {
+  const base = planRec(plan, opts);
+  if (!weekly?.length) return { ...base, otTotal: base.otHrs * fwdCount(plan) };
+  const metrics = otMetricsFromWeekly(weekly, plan);
+  const gap = Math.max(0, -(Number(plan.sustained) || 0));
+  const cross = opts.xr != null ? Number(opts.xr) : base.xr;
+  const residual = Math.round(Math.max(0, gap - cross - metrics.otFTE) * 100) / 100;
+  const starts =
+    opts.starts != null
+      ? Number(opts.starts)
+      : residual > 0
+        ? Math.ceil(residual / (0.97 * 0.98 * 0.99))
+        : 0;
+  const timing = hireTiming(plan, opts);
+  return {
+    ...base,
+    gap,
+    otHrs: metrics.avgHrs,
+    otFTE: metrics.otFTE,
+    otPct: metrics.otPct,
+    otTotal: metrics.total,
+    xr: cross,
+    residual,
+    starts,
+    trainWk: timing.trainWk,
+    nestWk: timing.nestWk,
+    productiveIn: timing.productiveIn,
+  };
+}
+
+/** Dynamic one-liner explaining what accepting the package achieves. */
+export function recBenefitSummary(plan, rec, baseline) {
+  const gap = baseline?.gap ?? rec.gap;
+  const closed = Math.round(Math.max(0, gap - rec.residual) * 100) / 100;
+  const pct = gap > 0.01 ? Math.round((closed / gap) * 100) : 100;
+  const pieces = [];
+  if (rec.otFTE > 0.01) pieces.push(`${f2(rec.otFTE)} FTE from OT`);
+  if (rec.xr > 0.01) pieces.push(`${f2(rec.xr)} FTE from cross-util`);
+  if (rec.starts > 0) {
+    pieces.push(
+      `${rec.starts} hire${rec.starts !== 1 ? 's' : ''} (productive wk +${rec.productiveIn})`,
+    );
+  }
+  if (!pieces.length) {
+    return 'No staffing levers recommended — the plan tracks requirement across the forward horizon.';
+  }
+  let msg = `Accepting closes ${f2(closed)} of ${f2(gap)} FTE understaffing (${pct}%) via ${pieces.join(', ')}`;
+  if (rec.residual > 0.51) {
+    msg += `; ${f2(rec.residual)} FTE remains after OT + cross-util until hires land`;
+  } else {
+    msg += ' — gap fully covered on the 12-week view';
+  }
+  const immediate = Math.round((rec.otFTE + rec.xr) * 100) / 100;
+  if (immediate > 0.01 && plan.sustained < -0.5) {
+    const estSustained = Math.round((Number(plan.sustained) + immediate) * 100) / 100;
+    msg += `. Sustained O/U improves from ${f2(plan.sustained)} to ~${f2(estSustained)} FTE once OT and loans post`;
+  }
+  return msg;
+}
+
 export function nfAlert(msg) {
   window.alert(`${msg}\n\nSimulated in Concierge — wired like the HTML prototype.`);
 }

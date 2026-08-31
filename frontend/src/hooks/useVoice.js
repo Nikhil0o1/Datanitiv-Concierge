@@ -47,29 +47,34 @@ export function useVoice({ actionsRef, stateRef, setState, pushRef, isHumanActiv
     const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
     chunksRef.current = [];
 
-    setState((s) => ({ ...s, agentHear: false, bubble: '' }));
+    setState((s) => ({ ...s, agentHear: false, agentStatus: 'Processing', bubble: '', agentTalk: false }));
 
     if (!blob.size) {
-      setState((s) => ({ ...s, agentStatus: 'Standing by' }));
+      setState((s) => ({ ...s, agentStatus: 'Standing by', agentTalk: false, bubble: '' }));
       return;
     }
-
-    setState((s) => ({ ...s, agentStatus: 'Processing' }));
 
     try {
       const stt = await api.stt(blob);
       const text = (stt.text || '').trim();
-      if (!text) {
+
+      if (stt.transcription_quality === 'retry_suggested' || !text) {
         const push = pushRef.current;
-        if (push) await push('d', 'Voice', 'Could not transcribe — speak clearly or type your request below.');
-        setState((s) => ({ ...s, agentStatus: 'Standing by' }));
+        const hint =
+          stt.transcription_quality === 'retry_suggested'
+            ? "I didn't catch that clearly — try again in English, a bit closer to the mic."
+            : 'Could not transcribe — speak clearly or type your request below.';
+        if (push) await push('d', 'Voice', hint);
+        setState((s) => ({ ...s, agentStatus: 'Standing by', agentTalk: false, bubble: '' }));
         return;
       }
-      await chat.sendMessage(text, 'voice');
+
+      await chat.sendMessage(text, 'voice', { skipFiller: false });
     } catch (e) {
       const push = pushRef.current;
-      if (push) await push('d', 'Voice', e?.message || 'Voice processing failed');
-      setState((s) => ({ ...s, agentStatus: 'Standing by' }));
+      const msg = (e?.message || 'Voice processing failed').replace(/elevenlabs/gi, 'voice service');
+      if (push) await push('d', 'Voice', msg);
+      setState((s) => ({ ...s, agentStatus: 'Standing by', agentTalk: false, bubble: '' }));
     }
   }, [recording, chat, pushRef, setState]);
 
@@ -83,6 +88,7 @@ export function useVoice({ actionsRef, stateRef, setState, pushRef, isHumanActiv
     voiceBusy: chat.busy,
     toggleRecording,
     sendMessage: chat.sendMessage,
+    speakText: chat.speakText,
     chatBusy: chat.busy,
   };
 }
