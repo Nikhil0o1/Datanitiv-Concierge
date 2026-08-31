@@ -20,6 +20,12 @@ class WorkerMetrics:
     detections_triggered: int = 0
     llm_calls: int = 0
     llm_failures: int = 0
+    nudges_created: int = 0
+    nudges_suppressed: int = 0
+    nudges_blocked_low_reliability: int = 0
+    cases_promoted: int = 0
+    embedding_failures: int = 0
+    similar_case_lookups: int = 0
     _window_start: float = field(default_factory=time.monotonic)
     _window_count: int = 0
 
@@ -55,6 +61,12 @@ class WorkerMetrics:
             "detections_triggered": self.detections_triggered,
             "llm_calls": self.llm_calls,
             "llm_failures": self.llm_failures,
+            "nudges_created": self.nudges_created,
+            "nudges_suppressed": self.nudges_suppressed,
+            "nudges_blocked_low_reliability": self.nudges_blocked_low_reliability,
+            "cases_promoted": self.cases_promoted,
+            "embedding_failures": self.embedding_failures,
+            "similar_case_lookups": self.similar_case_lookups,
         }
 
 

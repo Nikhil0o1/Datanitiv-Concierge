@@ -9,9 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.concierge.models import ConciergeRecommendation
-from app.concierge.services.cases import find_similar_cases
 from app.concierge.services.incidents import mark_recommendation_available, upsert_wfm_incident
-from app.concierge.services.llm import generate_explanation
 from app.concierge.services.metrics import worker_metrics
 from app.concierge.services.recommendations import generate_recommendations
 from app.concierge.services.wfm_actions import ui_actions_for_wfm_incident
@@ -113,18 +111,6 @@ async def _ensure_primary_recommendation(
     rec.domain = "wfm"
     rec.ui_actions = ui_actions_for_wfm_incident(incident_type, signals)
     await mark_recommendation_available(session, incident.id)
-
-    similar = await find_similar_cases(session, incident)
-    similar_dicts = [
-        {
-            "summary": c.summary_text,
-            "resolution": c.resolution,
-            "outcome": c.outcome,
-            "similarity": round(s, 3),
-        }
-        for c, s in similar
-    ]
-    await generate_explanation(session, incident, rec, similar_dicts)
     return rec
 
 

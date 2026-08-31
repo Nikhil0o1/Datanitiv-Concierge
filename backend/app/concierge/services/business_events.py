@@ -33,3 +33,9 @@ async def emit_business_event(
             await ingest_events(session, [event])
     except Exception:
         pass
+
+
+def session_id_from_request(request) -> str | None:
+    if request is None:
+        return None
+    return request.headers.get("X-Session-ID") or request.headers.get("x-session-id")

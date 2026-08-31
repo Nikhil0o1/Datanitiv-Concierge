@@ -8,11 +8,13 @@ from httpx import ASGITransport, AsyncClient
 
 os.environ["CONCIERGE_WORKER_ENABLED"] = "false"
 os.environ["CONCIERGE_LLM_ENABLED"] = "false"
+os.environ["CONCIERGE_EMBEDDINGS"] = "hash"
 
 from app.config import settings  # noqa: E402
 
 settings.concierge_worker_enabled = False
 settings.concierge_llm_enabled = False
+settings.concierge_embeddings = "hash"
 
 from app.main import app  # noqa: E402
 

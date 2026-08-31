@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -166,28 +166,70 @@ async def patch_package(
 
 
 @router.post("/execute", response_model=ExecuteQueueResponse)
-async def execute_queue(body: ExecuteQueueRequest, session: AsyncSession = Depends(get_db)):
+async def execute_queue(body: ExecuteQueueRequest, request: Request, session: AsyncSession = Depends(get_db)):
+    from app.concierge.services.business_events import emit_business_event, session_id_from_request
+
+    sid = session_id_from_request(request)
+    endpoint = "/api/queue/execute"
     if not body.package_ids:
+        await emit_business_event(
+            event_type="queue.execute.failed",
+            severity="error",
+            session_id=sid,
+            endpoint=endpoint,
+            status_code=400,
+            error_code="NO_PACKAGES",
+        )
         raise HTTPException(status_code=400, detail="No packages selected")
 
     packages = await _packages(session)
     selected = [p for p in packages if int(p["id"]) in body.package_ids]
     if len(selected) != len(body.package_ids):
+        await emit_business_event(
+            event_type="queue.execute.failed",
+            severity="error",
+            session_id=sid,
+            endpoint=endpoint,
+            status_code=404,
+            error_code="PACKAGE_NOT_FOUND",
+        )
         raise HTTPException(status_code=404, detail="One or more packages not found")
 
     posted: list[int] = []
     applied: list[dict] = []
-    for pkg in selected:
-        result = await apply_staffing_package(session, pkg)
-        applied.append(result)
-        if pkg["status"] != "posted":
-            pkg["status"] = "posted"
-            posted.append(int(pkg["id"]))
-        else:
-            posted.append(int(pkg["id"]))
+    try:
+        for pkg in selected:
+            result = await apply_staffing_package(session, pkg)
+            applied.append(result)
+            if pkg["status"] != "posted":
+                pkg["status"] = "posted"
+                posted.append(int(pkg["id"]))
+            else:
+                posted.append(int(pkg["id"]))
+    except Exception as exc:
+        cap_id = selected[0].get("cap_id") if selected else None
+        await emit_business_event(
+            event_type="queue.execute.failed",
+            severity="error",
+            session_id=sid,
+            endpoint=endpoint,
+            status_code=500,
+            error_code="QUEUE_EXECUTE_ERROR",
+            metadata={"cap_id": cap_id, "error": str(exc)[:200]},
+        )
+        raise HTTPException(status_code=500, detail="Queue execute failed") from exc
 
     await _save_packages(session, packages)
     await session.commit()
+
+    cap_ids = list({p.get("cap_id") for p in selected if p.get("cap_id")})
+    await emit_business_event(
+        event_type="queue.execute.completed",
+        session_id=sid,
+        endpoint=endpoint,
+        status_code=200,
+        metadata={"posted": posted, "cap_ids": cap_ids},
+    )
 
     added = sum(float(a.get("added_fte") or 0) for a in applied if not a.get("skipped"))
     immediate = sum(float(a.get("immediate_fte") or 0) for a in applied if not a.get("skipped"))

@@ -15,16 +15,20 @@ function reliabilityClass(score) {
 function factorSummary(factors) {
   if (!factors || typeof factors !== 'object') return null;
   const parts = [];
-  if (factors.similar_cases != null) parts.push(`${factors.similar_cases} similar cases`);
-  if (factors.successful_outcomes != null && factors.similar_cases) {
-    parts.push(`${factors.successful_outcomes}/${factors.similar_cases} succeeded`);
+  const prior = factors.prior_outcomes ?? factors.similar_cases;
+  const successes = factors.successful_outcomes ?? factors.live_successes;
+  if (prior != null && prior > 0) {
+    parts.push(`${prior} prior outcome${prior === 1 ? '' : 's'}`);
+  }
+  if (successes != null && prior) {
+    parts.push(`${successes}/${prior} succeeded`);
   }
   if (factors.evidence_quality) parts.push(`${factors.evidence_quality} evidence`);
   return parts.length ? parts.join(' · ') : null;
 }
 
-export default function ConciergeNudgePanel({ nudges, onShowMe, onDismiss, onSnooze, loading }) {
-  if (!nudges?.length && !loading) return null;
+export default function ConciergeNudgePanel({ nudges, onShowMe, onDismiss, onSnooze }) {
+  if (!nudges?.length) return null;
 
   const visible = (nudges || []).slice(0, 3);
   const overflow = Math.max(0, (nudges?.length || 0) - visible.length);
@@ -35,12 +39,9 @@ export default function ConciergeNudgePanel({ nudges, onShowMe, onDismiss, onSno
         <span className="concierge-dot" aria-hidden />
         <span className="concierge-label">Concierge</span>
         <span className="concierge-sub">WFM monitor</span>
-        {nudges?.length ? <span className="concierge-count">{nudges.length}</span> : null}
+        <span className="concierge-count">{nudges.length}</span>
       </div>
       <div className="concierge-nudges-stack">
-        {loading && !nudges.length ? (
-          <div className="concierge-nudge-card concierge-nudge-loading">Scanning…</div>
-        ) : null}
         {visible.map((nudge) => (
           <article key={nudge.id} className="concierge-nudge-card" data-cap={nudge.cap_id || ''}>
             <header className="concierge-nudge-top">

@@ -93,7 +93,7 @@ def _fallback_explanation(incident: ConciergeIncident, recommendation: Concierge
         f"Incident {incident.incident_type} detected on {incident.affected_feature}. "
         f"Recommended action: {recommendation.action}. "
         f"Reliability score: {recommendation.reliability_score:.0%} based on "
-        f"{factors.get('similar_cases', 0)} similar cases "
+        f"{factors.get('prior_outcomes', factors.get('similar_cases', 0))} prior outcomes "
         f"({factors.get('successful_outcomes', 0)} successful)."
     )
 

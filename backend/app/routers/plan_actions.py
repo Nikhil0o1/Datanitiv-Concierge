@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,10 +93,24 @@ async def _shift_projected_forward(session, plan, cp_plan_id: int, from_idx: int
 async def submit_shrinkage(
     cap_id: str,
     body: ShrinkageSubmitRequest,
+    request: Request,
     session: AsyncSession = Depends(get_db),
 ):
+    from app.concierge.services.business_events import emit_business_event, session_id_from_request
+
+    sid = session_id_from_request(request)
+    endpoint = f"/api/plans/{cap_id}/shrinkage"
     plan = await load_plan(session, cap_id)
     if not plan:
+        await emit_business_event(
+            event_type="plan.shrinkage.failed",
+            severity="error",
+            session_id=sid,
+            endpoint=endpoint,
+            status_code=404,
+            error_code="PLAN_NOT_FOUND",
+            metadata={"cap_id": cap_id},
+        )
         raise HTTPException(status_code=404, detail=f"Plan {cap_id} not found")
 
     cp_plan_id = cap_to_cp(cap_id)
@@ -107,6 +121,15 @@ async def submit_shrinkage(
 
     for item in body.weeks:
         if item.week_idx not in week_map:
+            await emit_business_event(
+                event_type="plan.shrinkage.failed",
+                severity="error",
+                session_id=sid,
+                endpoint=endpoint,
+                status_code=400,
+                error_code="INVALID_WEEK_INDEX",
+                metadata={"cap_id": cap_id, "week_idx": item.week_idx},
+            )
             raise HTTPException(status_code=400, detail=f"Week index {item.week_idx} not found")
         label, week_date = week_map[item.week_idx]
         old_shrink = plan.shrink_plan[item.week_idx] or 0.0
@@ -184,6 +207,13 @@ async def submit_shrinkage(
     }
     await update_plan_meta(session, cap_id, meta_patch)
     await session.commit()
+    await emit_business_event(
+        event_type="plan.shrinkage.submitted",
+        session_id=sid,
+        endpoint=endpoint,
+        status_code=200,
+        metadata={"cap_id": cap_id, "weeks": len(updated_weeks)},
+    )
     return ShrinkageSubmitResponse(
         cap_id=cap_id,
         updated_weeks=sorted(updated_weeks, key=lambda w: w.week_idx),
@@ -434,20 +464,52 @@ async def update_headcount(
 async def map_roster(
     cap_id: str,
     body: RosterMapRequest,
+    request: Request,
     session: AsyncSession = Depends(get_db),
 ):
+    from app.concierge.services.business_events import emit_business_event, session_id_from_request
+
+    sid = session_id_from_request(request)
+    endpoint = f"/api/plans/{cap_id}/roster/map"
     plan = await load_plan(session, cap_id)
     if not plan:
+        await emit_business_event(
+            event_type="plan.roster.failed",
+            severity="error",
+            session_id=sid,
+            endpoint=endpoint,
+            status_code=404,
+            error_code="PLAN_NOT_FOUND",
+            metadata={"cap_id": cap_id},
+        )
         raise HTTPException(status_code=404, detail=f"Plan {cap_id} not found")
 
     roster: OneviewNewHire | None = None
     if body.class_id:
         roster = await session.get(OneviewNewHire, body.class_id)
         if not roster or roster.capability_id != cap_id:
+            await emit_business_event(
+                event_type="plan.roster.failed",
+                severity="error",
+                session_id=sid,
+                endpoint=endpoint,
+                status_code=404,
+                error_code="ROSTER_CLASS_NOT_FOUND",
+                metadata={"cap_id": cap_id},
+            )
             raise HTTPException(status_code=404, detail="Roster class not found for this plan")
     elif plan.roster_rows:
         roster = next((r for r in plan.roster_rows if (r.class_status or "") == "missing"), plan.roster_rows[0])
     else:
+        await emit_business_event(
+            event_type="plan.roster.failed",
+            severity="error",
+            session_id=sid,
+            endpoint=endpoint,
+            status_code=400,
+            error_code="NO_ROSTER_CLASS",
+            metadata={"cap_id": cap_id},
+        )
         raise HTTPException(status_code=400, detail="No roster class to map")
 
     meta_cls = plan.meta.get("cls") or {}
@@ -533,6 +595,13 @@ async def map_roster(
     await _shift_projected_forward(session, plan, cp_plan_id, cur_idx, projected_adjustment)
 
     await session.commit()
+    await emit_business_event(
+        event_type="plan.roster.mapped",
+        session_id=sid,
+        endpoint=endpoint,
+        status_code=200,
+        metadata={"cap_id": cap_id, "mapped_fte": mapped_fte},
+    )
     return RosterMapResponse(
         cap_id=cap_id,
         mapped_fte=mapped_fte,

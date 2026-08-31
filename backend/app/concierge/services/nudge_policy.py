@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.concierge.models import ConciergeEvent, ConciergeIncident, ConciergeNudge, ConciergeSession
 from app.concierge.services.sessionization import is_synthetic_session
 
@@ -14,6 +17,7 @@ USER_CONTEXT_EVENTS = frozenset(
         "plan.opened",
         "tab.changed",
         "view.changed",
+        "ui.context",
     }
 )
 
@@ -25,6 +29,15 @@ OPERATIONAL_INCIDENT_TYPES = frozenset(
         "ROSTER_SUBMISSION_FAILURE",
         "API_FAILURE",
         "ERROR_RATE_SPIKE",
+    }
+)
+
+# Operational types that may become a card — only after the user just failed a WFM action.
+WFM_ACTION_OPERATIONAL_TYPES = frozenset(
+    {
+        "SHRINKAGE_SUBMISSION_FAILURE",
+        "QUEUE_EXECUTE_FAILURE",
+        "ROSTER_SUBMISSION_FAILURE",
     }
 )
 
@@ -41,6 +54,10 @@ WFM_INCIDENT_TYPES = frozenset(
     }
 )
 
+CRITICAL_WFM_TYPES = frozenset({"PLAN_CRITICAL_SHORT"})
+
+TYPE_DISMISS_SUPPRESS_COUNT = 2
+
 
 async def incident_nudge_suppressed(session: AsyncSession, incident_id) -> bool:
     """True if the user already dismissed or accepted guidance for this incident."""
@@ -53,6 +70,33 @@ async def incident_nudge_suppressed(session: AsyncSession, incident_id) -> bool:
         )
     ).first()
     return row is not None
+
+
+async def type_nudge_suppressed(session: AsyncSession, incident_type: str, cap_id: str | None) -> bool:
+    """True if this incident type was dismissed twice for the same plan."""
+    if not cap_id:
+        return False
+    count = (
+        await session.execute(
+            select(func.count())
+            .select_from(ConciergeNudge)
+            .join(ConciergeIncident, ConciergeIncident.id == ConciergeNudge.incident_id)
+            .where(
+                ConciergeIncident.incident_type == incident_type,
+                ConciergeNudge.cap_id == cap_id,
+                ConciergeNudge.status == "dismissed",
+            )
+        )
+    ).scalar_one()
+    return int(count or 0) >= TYPE_DISMISS_SUPPRESS_COUNT
+
+
+def reliability_allows_nudge(incident: ConciergeIncident, reliability_score: float) -> bool:
+    """Critical WFM may show once below the floor; everything else must clear it."""
+    floor = settings.concierge_nudge_min_reliability
+    if reliability_score >= floor:
+        return True
+    return incident.incident_type in CRITICAL_WFM_TYPES
 
 
 async def session_has_real_user_activity(session: AsyncSession, session_id: str | None) -> bool:
@@ -78,14 +122,17 @@ async def should_nudge_for_detection_event(
     incident: ConciergeIncident,
     is_new_incident: bool,
 ) -> bool:
-    """Operational nudges only for real user sessions with a fresh incident."""
+    """Operational cards only for a just-failed WFM action in a real user session."""
     if not is_new_incident:
         return False
     if is_synthetic_session(event.session_id):
         return False
-    if incident.incident_type not in OPERATIONAL_INCIDENT_TYPES:
+    if incident.incident_type not in WFM_ACTION_OPERATIONAL_TYPES:
         return False
     if await incident_nudge_suppressed(session, incident.id):
+        return False
+    cap_id = incident.cap_id or (incident.signals or {}).get("cap_id")
+    if await type_nudge_suppressed(session, incident.incident_type, cap_id):
         return False
     if not await session_has_real_user_activity(session, event.session_id):
         return False
@@ -107,6 +154,8 @@ async def should_nudge_for_user_context(
         return False
     if await incident_nudge_suppressed(session, incident.id):
         return False
+    if await type_nudge_suppressed(session, incident.incident_type, incident.cap_id):
+        return False
 
     meta = event.metadata_ or {}
     cap_id = meta.get("cap_id") or meta.get("active_cap_id")
@@ -126,19 +175,75 @@ async def should_nudge_for_friction_session(
     session: AsyncSession,
     row: ConciergeSession,
 ) -> bool:
-    if is_synthetic_session(row.session_id):
+    """Friction incidents stay in the DB; they are not user-facing cards."""
+    return False
+
+
+async def wfm_session_budget_exhausted(
+    session: AsyncSession,
+    user_session_id: str | None,
+    *,
+    excluding_nudge_id=None,
+) -> bool:
+    """At most one live WFM card per session, plus a cooldown after one was shown."""
+    if not user_session_id or is_synthetic_session(user_session_id):
         return False
-    if row.error_count < 3:
+
+    user_sess = (
+        await session.execute(select(ConciergeSession).where(ConciergeSession.session_id == user_session_id))
+    ).scalar_one_or_none()
+    if not user_sess:
         return False
-    if not await session_has_real_user_activity(session, row.session_id):
+
+    cooldown = timedelta(minutes=max(1, settings.concierge_nudge_cooldown_minutes))
+    last_raw = (user_sess.summary or {}).get("last_wfm_nudge_at")
+    if last_raw:
+        try:
+            last_at = datetime.fromisoformat(str(last_raw).replace("Z", "+00:00"))
+            if last_at.tzinfo is None:
+                last_at = last_at.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - last_at < cooldown:
+                return True
+        except ValueError:
+            pass
+
+    active_cap = (user_sess.summary or {}).get("active_cap_id")
+    if not active_cap:
         return False
-    return True
+
+    filters = [
+        ConciergeNudge.cap_id == active_cap,
+        ConciergeNudge.domain == "wfm",
+        ConciergeNudge.status.in_(("pending", "shown")),
+    ]
+    if excluding_nudge_id is not None:
+        filters.append(ConciergeNudge.id != excluding_nudge_id)
+    live = (
+        await session.execute(select(func.count()).select_from(ConciergeNudge).where(*filters))
+    ).scalar_one()
+    return int(live or 0) >= settings.concierge_nudge_session_limit
+
+
+async def mark_session_wfm_nudge(session: AsyncSession, user_session_id: str | None) -> None:
+    if not user_session_id or is_synthetic_session(user_session_id):
+        return
+    user_sess = (
+        await session.execute(select(ConciergeSession).where(ConciergeSession.session_id == user_session_id))
+    ).scalar_one_or_none()
+    if not user_sess:
+        return
+    summary = dict(user_sess.summary or {})
+    summary["last_wfm_nudge_at"] = datetime.now(timezone.utc).isoformat()
+    user_sess.summary = summary
 
 
 async def filter_nudges_for_user_session(
     session: AsyncSession,
     nudges: list[ConciergeNudge],
     user_session_id: str | None,
+    *,
+    cap_id: str | None = None,
+    view: str | None = None,
 ) -> list[ConciergeNudge]:
     """Return only nudges relevant to this browser session."""
     if not user_session_id or is_synthetic_session(user_session_id):
@@ -158,7 +263,8 @@ async def filter_nudges_for_user_session(
     user_sess = (
         await session.execute(select(ConciergeSession).where(ConciergeSession.session_id == user_session_id))
     ).scalar_one_or_none()
-    active_cap = (user_sess.summary or {}).get("active_cap_id") if user_sess else None
+    active_cap = cap_id or ((user_sess.summary or {}).get("active_cap_id") if user_sess else None)
+    current_view = view if view is not None else ((user_sess.summary or {}).get("view") if user_sess else None)
 
     filtered: list[ConciergeNudge] = []
     for nudge in nudges:
@@ -166,13 +272,27 @@ async def filter_nudges_for_user_session(
         if not incident:
             continue
 
-        if incident.incident_type in FRICTION_INCIDENT_TYPES | OPERATIONAL_INCIDENT_TYPES:
+        if incident.incident_type in FRICTION_INCIDENT_TYPES:
+            continue
+
+        if incident.incident_type in OPERATIONAL_INCIDENT_TYPES:
+            if incident.incident_type not in WFM_ACTION_OPERATIONAL_TYPES:
+                continue
             if incident.session_id != user_session_id:
                 continue
 
         if incident.incident_type in WFM_INCIDENT_TYPES or nudge.domain == "wfm":
+            if current_view == "port":
+                continue
             if not active_cap or nudge.cap_id != active_cap:
                 continue
 
+        if await type_nudge_suppressed(session, incident.incident_type, nudge.cap_id):
+            continue
+
         filtered.append(nudge)
-    return filtered
+
+    wfm = [n for n in filtered if n.domain == "wfm" or (incidents.get(n.incident_id) and incidents[n.incident_id].incident_type in WFM_INCIDENT_TYPES)]
+    other = [n for n in filtered if n not in wfm]
+    limit = max(1, settings.concierge_nudge_session_limit)
+    return wfm[:limit] + other

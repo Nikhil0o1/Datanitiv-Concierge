@@ -67,6 +67,7 @@ def calculate_reliability(inp: ReliabilityInput) -> ReliabilityResult:
         score=score,
         factors={
             "similar_cases": inp.similar_case_count,
+            "prior_outcomes": inp.similar_case_count,
             "successful_outcomes": inp.successful_outcomes,
             "success_rate": round(success_rate, 4),
             "avg_similarity": round(inp.avg_similarity, 4),

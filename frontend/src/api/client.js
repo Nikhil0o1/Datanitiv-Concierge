@@ -129,8 +129,12 @@ export const api = {
     return res.blob();
   },
 
-  conciergePendingNudges: (limit = 5) =>
-    request(`/api/concierge/nudges/pending?limit=${limit}`),
+  conciergePendingNudges: (limit = 5, { capId, view } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (capId) qs.set('cap_id', capId);
+    if (view) qs.set('view', view);
+    return request(`/api/concierge/nudges/pending?${qs}`);
+  },
   conciergeConfig: () => request('/api/concierge/config'),
   conciergeNudgeShown: (nudgeId) =>
     request(`/api/concierge/nudges/${nudgeId}/shown`, { method: 'POST' }),

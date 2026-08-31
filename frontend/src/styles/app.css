@@ -1,4 +1,4 @@
-:root{
+﻿:root{
   --amber:#F5B01A; --amber-d:#8A6100; --amber-m:#FAD277; --amber-s:#FEF4DC;
   --ink:#1C1B18; --bg:#FFFFFF; --surf:#FAF9F6; --surf2:#F2F0EA; --line:#E8E5DD; --line2:#D2CDC1;
   --text:#1C1B18; --muted:#6B665D; --dim:#9A948A;
@@ -512,7 +512,7 @@ footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--dim);fon
 .navviews span.on{border-color:var(--ink);color:var(--ink);background:var(--amber-s);font-weight:600}
 
 /* Concierge — compact nudges; cursor runs only after Accept & show me */
-.concierge-nudges{position:absolute;top:10px;right:10px;z-index:45;width:min(280px,calc(100% - 20px));max-height:min(340px,calc(100vh - 100px));display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.concierge-nudges{position:absolute;top:52px;right:12px;z-index:80;width:min(300px,calc(100% - 24px));max-height:min(420px,calc(100vh - 140px));display:flex;flex-direction:column;gap:6px;pointer-events:none}
 .concierge-nudges-stack{display:flex;flex-direction:column;gap:6px;overflow-y:auto;overscroll-behavior:contain;max-height:min(300px,calc(100vh - 140px));padding-right:2px}
 .concierge-nudges-head{display:flex;align-items:center;gap:6px;padding:5px 9px;background:rgba(255,255,255,.94);border:1px solid var(--line);border-radius:8px;box-shadow:var(--sh);pointer-events:auto;flex:none}
 .concierge-dot{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:blip 1.6s infinite;flex:none}

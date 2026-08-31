@@ -75,7 +75,7 @@ export function emit(eventType, props = {}) {
       correlation_id,
     }),
   );
-  if (queue.length >= BATCH_SIZE) {
+  if (eventType === 'plan.opened' || queue.length >= BATCH_SIZE) {
     flush();
   } else {
     scheduleFlush();
