@@ -1,4 +1,14 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _normalize_database_url(url: str) -> str:
+    """Render Postgres provides postgresql://; SQLAlchemy async needs postgresql+asyncpg://."""
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://") :]
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    return url
 
 
 class Settings(BaseSettings):
@@ -32,6 +42,13 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_service_name: str = "capability-concierge"
     otel_exporter: str = "console"  # console | otlp
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        if isinstance(value, str):
+            return _normalize_database_url(value)
+        return value
 
     @property
     def cors_origin_list(self) -> list[str]:

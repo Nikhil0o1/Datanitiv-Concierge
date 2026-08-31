@@ -1,0 +1,58 @@
+# Render Blueprint — deploy all services from the Render Dashboard:
+# New + → Blueprint → connect Datanitiv-Concierge repo
+#
+# After sync, set secret env vars in the dashboard when prompted:
+#   ANTHROPIC_API_KEY, ELEVENLABS_API_KEY (optional)
+
+databases:
+  - name: concierge-db
+    databaseName: capability
+    plan: free
+
+services:
+  # FastAPI backend
+  - type: web
+    name: concierge-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: concierge-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        fromService:
+          name: concierge-web
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CONCIERGE_ENABLED
+        value: "true"
+      - key: CONCIERGE_WORKER_ENABLED
+        value: "true"
+      - key: CONCIERGE_LLM_ENABLED
+        value: "true"
+
+  # React + Vite frontend (static site on CDN)
+  - type: web
+    name: concierge-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          name: concierge-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL

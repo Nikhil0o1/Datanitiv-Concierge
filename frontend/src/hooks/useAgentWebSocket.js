@@ -2,7 +2,10 @@ import { useCallback, useRef, useState } from 'react';
 import { SCENARIOS } from '../data/scenarios';
 import { dispatchScenarioCommand } from './scenarioActions';
 
-const WS_URL = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/agent`;
+const API_URL = import.meta.env.VITE_API_URL || '';
+const WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  (API_URL ? `${API_URL.replace(/^http/, 'ws')}/ws/agent` : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/agent`);
 
 const SCENARIO_KEYS = {
   brief: 'brief',
