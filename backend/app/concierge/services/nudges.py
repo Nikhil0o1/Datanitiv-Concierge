@@ -63,7 +63,32 @@ async def create_nudge_for_recommendation(
         )
     ).scalar_one_or_none()
     if existing:
-        return existing
+        if existing.status in ("pending", "shown"):
+            return existing
+        if existing.status == "accepted":
+            # Unique on recommendation_id — reopen the card after cooldown instead of inserting.
+            existing.status = "pending"
+            existing.shown_at = None
+            existing.accepted_at = None
+            existing.dismissed_at = None
+            existing.snoozed_until = None
+            existing.title = incident_title(incident)
+            existing.summary = (
+                (recommendation.explanation.split("\n\n")[0][:500] if recommendation.explanation else None)
+                or recommendation.rationale
+            )
+            existing.explanation = recommendation.explanation
+            existing.reliability_score = recommendation.reliability_score
+            existing.reliability_factors = recommendation.reliability_factors or {}
+            existing.ui_actions = recommendation.ui_actions or []
+            existing.priority = incident_priority(incident)
+            await session.flush()
+            worker_metrics.nudges_created += 1
+            logger.info("Reopened nudge %s for cap=%s", existing.id, cap_id)
+            if recommendation.domain == "wfm" and user_session_id:
+                await mark_session_wfm_nudge(session, user_session_id)
+            return existing
+        return None
 
     pending_same_incident = (
         await session.execute(
