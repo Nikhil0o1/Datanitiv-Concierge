@@ -19,6 +19,7 @@ from app.services.agent_harness import SYSTEM_PROMPT, VOICE_STREAM_SYSTEM_PROMPT
 from app.services.action_enrichment import enrich_actions
 from app.services.agent_stream import extract_partial_reply, parse_stream_response, sse_event
 from app.services.elevenlabs_stream_tts import StreamTTS
+from app.services.execution_trace import record_trace
 from app.services.usage_tracker import record_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,14 @@ async def agent_chat(body: AgentChatRequest, session: AsyncSession = Depends(get
 
         latency_ms = (time.perf_counter() - t0) * 1000
         raw = response.content[0].text if response.content else ""
+        record_trace(
+            endpoint="/agent/chat",
+            model=settings.anthropic_model,
+            max_tokens=2048,
+            system=SYSTEM_PROMPT,
+            messages=messages,
+            raw_response=raw,
+        )
         asyncio.create_task(
             record_llm_usage(
                 model=settings.anthropic_model,
@@ -212,6 +221,15 @@ async def agent_chat_stream(body: AgentChatRequest, session: AsyncSession = Depe
                                 await tts.feed_text(partial)
 
                     final_message = await stream.get_final_message()
+                    final_raw = final_message.content[0].text if final_message.content else buffer
+                    record_trace(
+                        endpoint="/agent/chat/stream",
+                        model=settings.anthropic_model,
+                        max_tokens=2048,
+                        system=stream_system,
+                        messages=messages,
+                        raw_response=final_raw,
+                    )
                     latency_ms = (time.perf_counter() - t0) * 1000
                     asyncio.create_task(
                         record_llm_usage(
@@ -295,6 +313,14 @@ async def agent_chat_stream(body: AgentChatRequest, session: AsyncSession = Depe
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/execution-traces")
+async def agent_execution_traces():
+    """Recent Vera calls — exact input sent to the model and exact raw output received. In-memory only."""
+    from app.services.execution_trace import list_traces
+
+    return {"traces": list_traces()}
 
 
 @router.get("/status")

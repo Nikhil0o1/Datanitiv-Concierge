@@ -183,6 +183,7 @@ export const api = {
   },
   portfolioAnalysis: () => request('/api/portfolio/analysis'),
   agentStatus: () => request('/api/agent/status'),
+  agentExecutionTraces: () => request('/api/agent/execution-traces'),
   costSummary: () => request('/api/cost/summary'),
   costAnalytics: (range = '24h', groupBy = 'none') =>
     request(`/api/cost/analytics?range=${encodeURIComponent(range)}&group_by=${encodeURIComponent(groupBy)}`),
