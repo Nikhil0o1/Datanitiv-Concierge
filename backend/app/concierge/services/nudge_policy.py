@@ -60,16 +60,43 @@ TYPE_DISMISS_SUPPRESS_COUNT = 2
 
 
 async def incident_nudge_suppressed(session: AsyncSession, incident_id) -> bool:
-    """True if the user already dismissed or accepted guidance for this incident."""
-    row = (
+    """True if guidance was dismissed, or accepted recently (cooldown).
+
+    Accepted cards can resurface after the session cooldown if the incident is still open,
+    so planners aren't permanently blocked after one Accept & show me.
+    """
+    dismissed = (
         await session.execute(
             select(ConciergeNudge.id).where(
                 ConciergeNudge.incident_id == incident_id,
-                ConciergeNudge.status.in_(("dismissed", "accepted")),
+                ConciergeNudge.status == "dismissed",
             )
         )
     ).first()
-    return row is not None
+    if dismissed is not None:
+        return True
+
+    accepted = (
+        await session.execute(
+            select(ConciergeNudge)
+            .where(
+                ConciergeNudge.incident_id == incident_id,
+                ConciergeNudge.status == "accepted",
+            )
+            .order_by(ConciergeNudge.accepted_at.desc().nullslast(), ConciergeNudge.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not accepted:
+        return False
+
+    cooldown = timedelta(minutes=max(1, settings.concierge_nudge_cooldown_minutes))
+    when = accepted.accepted_at or accepted.updated_at or accepted.created_at
+    if when and when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    if when and datetime.now(timezone.utc) - when < cooldown:
+        return True
+    return False
 
 
 async def type_nudge_suppressed(session: AsyncSession, incident_type: str, cap_id: str | None) -> bool:

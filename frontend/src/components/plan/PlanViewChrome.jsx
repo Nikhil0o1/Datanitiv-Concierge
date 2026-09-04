@@ -1,8 +1,6 @@
 import { f2 } from '../../utils/format';
 import { statusOf } from '../../utils/planLogic';
-import { PEEK_TAGS, TAB_LABELS, tabsForPlan } from './PlanTabs';
-
-const STEP_NUM = { ov: 1, hc: 2, nh: 3, shr: 4, att: 5, rec: 6, exe: 7 };
+import { TAB_LABELS, tabsForPlan } from './PlanTabs';
 
 function statLabel(plan) {
   const st = statusOf(plan);
@@ -69,23 +67,22 @@ export function PlanStepper({ plan, activeTab, shownTabs, onTabClick }) {
 
   return (
     <div className="stepper">
-      {keys.map((k) => {
-        const num = STEP_NUM[k];
-        const done = shownTabs.includes(k) && k !== activeTab;
+      {keys.map((k, idx) => {
+        const num = idx + 1;
+        const visited = shownTabs.includes(k) && k !== activeTab;
         return (
           <button
             key={k}
             type="button"
-            className={`stp ${activeTab === k ? 'on' : ''} ${done ? 'done' : ''}`}
+            className={`stp ${activeTab === k ? 'on' : ''} ${visited ? 'visited' : ''}`}
             data-step={k}
             onClick={() => onTabClick?.(k)}
           >
-            {num != null ? <b>{num}</b> : null}
+            <b>{num}</b>
             {TAB_LABELS[k]}
           </button>
         );
       })}
-      {PEEK_TAGS[activeTab] ? <span className="peek">{PEEK_TAGS[activeTab]}</span> : null}
     </div>
   );
 }

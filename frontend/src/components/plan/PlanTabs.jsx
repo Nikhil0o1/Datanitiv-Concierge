@@ -8,7 +8,6 @@ import {
   applyLiveShrinkage,
   applyLiveAttrition,
   kpiTrends,
-  ouColor,
   planRec,
   planRecWithWeekly,
   recBaseline,
@@ -45,12 +44,12 @@ const TAB_LABELS = {
 export const PEEK_TAGS = {
   ov: 'Overview · KPI signals',
   fw: 'Forecast · volume & AHT',
-  hc: 'Step 2 · agent skipped this one',
-  nh: 'Step 3 · this one does matter',
-  shr: 'Step 4 · the cause',
-  att: 'Step 5 · agent skipped this one',
-  rec: 'Step 6 · the package',
-  exe: 'Step 7 · nothing posts until you say so',
+  hc: 'Headcount · snapshot',
+  nh: 'New Hire · roster & class',
+  shr: 'Shrinkage · planned vs actual',
+  att: 'Attrition · planned vs actual',
+  rec: 'Recommend · the package',
+  exe: 'Execute · nothing posts until you say so',
 };
 
 function TabPeek({ tab }) {
@@ -61,9 +60,11 @@ function TabPeek({ tab }) {
 
 export { TAB_LABELS };
 
+/** Core 7 steps match HTML; Forecast inserts after Overview for volume-based plans. */
 export function tabsForPlan(plan) {
-  if (!plan) return Object.keys(TAB_LABELS).filter((k) => k !== 'fw');
-  return plan.isVol ? Object.keys(TAB_LABELS) : Object.keys(TAB_LABELS).filter((k) => k !== 'fw');
+  const core = ['ov', 'hc', 'nh', 'shr', 'att', 'rec', 'exe'];
+  if (plan?.isVol) return ['ov', 'fw', ...core.slice(1)];
+  return core;
 }
 
 function OverviewTab({
@@ -71,8 +72,10 @@ function OverviewTab({
   decisions = {},
   gotBy = {},
   packages = [],
+  editorWeeks = [],
   onGoTab,
   onDecide,
+  onEditorChange,
   onAcceptRec,
   onRejectRec,
   onMapRoster,
@@ -168,10 +171,34 @@ function OverviewTab({
             </div>
           </div>
           <div className="sec-actions">
-            <button type="button" className={`qbtn acc ${shrDecision === 'acc' ? 'on' : ''}`} title="Accept" onClick={() => onDecide?.('shr', 'acc')}>✓</button>
-            <button type="button" className={`qbtn rej ${shrDecision === 'rej' ? 'on' : ''}`} title="Reject" onClick={() => onDecide?.('shr', 'rej')}>✕</button>
-            <button type="button" className="qbtn adj" title="Adjust" onClick={() => onGoTab?.('shr')}>✎</button>
-            <button type="button" className="arrowbtn" data-step="shr" onClick={() => onGoTab?.('shr')}>→</button>
+            <button
+              type="button"
+              className={`qbtn acc ${shrDecision === 'acc' ? 'on' : ''}`}
+              title="Accept — apply actual avg to forward plan"
+              onClick={(e) => {
+                e.stopPropagation();
+                const target = shr.actAvg;
+                if (editorWeeks.length) {
+                  editorWeeks.forEach((ew, k) => onEditorChange?.(k, target, true));
+                }
+                onDecide?.('shr', null, 'acc');
+              }}
+            >
+              ✓
+            </button>
+            <button
+              type="button"
+              className={`qbtn rej ${shrDecision === 'rej' ? 'on' : ''}`}
+              title="Reject — keep current planned shrinkage"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDecide?.('shr', null, 'rej');
+              }}
+            >
+              ✕
+            </button>
+            <button type="button" className="qbtn adj" title="Adjust" onClick={(e) => { e.stopPropagation(); onGoTab?.('shr'); }}>✎</button>
+            <button type="button" className="arrowbtn" data-step="shr" onClick={(e) => { e.stopPropagation(); onGoTab?.('shr'); }}>→</button>
           </div>
         </div>
 
@@ -223,28 +250,6 @@ function OverviewTab({
             <button type="button" className="arrowbtn" data-view="port" onClick={() => (portQueued ? onOpenQueue?.() : onBackPortfolio?.())}>→</button>
           </div>
         </div>
-      </div>
-
-      <div className="card in" style={{ marginTop: 10 }}>
-        <div className="ch">
-          <b>Where it breaks</b>
-          <span className="tag">12 weeks forward</span>
-        </div>
-        <SeriesChart
-          weeks={plan.weeks}
-          curIdx={plan.curIdx}
-          zeroLine
-          height={220}
-          valueUnit="FTE"
-          bars={[
-            {
-              label: 'O/U',
-              tipLabel: 'O/U',
-              data: plan.sOU,
-              color: (v, i) => ouColor(v, i, plan.curIdx),
-            },
-          ]}
-        />
       </div>
     </div>
   );
@@ -1623,8 +1628,10 @@ export default function PlanTabs({
           decisions={decisions}
           gotBy={gotBy}
           packages={packages}
+          editorWeeks={state?.editorWeeks || []}
           onGoTab={onGoTab}
           onDecide={onDecide}
+          onEditorChange={onEditorChange}
           onAcceptRec={onAcceptRec}
           onRejectRec={onRejectRec}
           onMapRoster={() => onGoTab?.('nh')}

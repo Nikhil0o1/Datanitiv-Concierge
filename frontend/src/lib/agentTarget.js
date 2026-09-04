@@ -52,7 +52,7 @@ export function fireAgentTarget(el, handlers) {
   const pkg = el.classList.contains('pkg') ? el : el.closest?.('.pkg');
   if (pkg) {
     const pkgCap = pkg.getAttribute('data-cap');
-    if (pkgCap && !pkg.classList.contains('done')) {
+    if (pkgCap && !pkg.classList.contains('done') && !pkg.classList.contains('is-posted')) {
       handlers.togglePackage?.(pkgCap);
       return true;
     }

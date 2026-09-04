@@ -351,7 +351,10 @@ export default function PlanningApp({ logoSrc }) {
         setMemories(mem);
         setState((s) => ({
           ...s,
-          packages: (pkg || []).map((p) => ({ ...p, ticked: false, done: false })),
+          packages: (pkg || []).map((p) => {
+            const posted = p.status === 'posted' || Boolean(p.staffing_applied);
+            return { ...p, ticked: false, done: posted };
+          }),
           editorWeeks: buildEditorWeeks(rows.find((r) => r.capId === 'CAP00010')),
           attrWeeks: buildAttrWeeks(rows.find((r) => r.capId === 'CAP00010')),
           revealed: { dec: true, auto: true },
@@ -782,7 +785,11 @@ export default function PlanningApp({ logoSrc }) {
   const handleSelectAllPackages = useCallback(() => {
     setState((s) => ({
       ...s,
-      packages: s.packages.map((p) => (p.done ? p : { ...p, ticked: true })),
+      packages: s.packages.map((p) =>
+        p.done || p.status === 'posted' || p.status === 'rejected'
+          ? { ...p, ticked: false }
+          : { ...p, ticked: true },
+      ),
     }));
   }, []);
 
@@ -794,9 +801,11 @@ export default function PlanningApp({ logoSrc }) {
   }, []);
 
   const handleExecuteSelected = useCallback(async () => {
-    const ticked = stateRef.current.packages.filter((p) => p.ticked && !p.done);
+    const ticked = stateRef.current.packages.filter(
+      (p) => p.ticked && !p.done && p.status !== 'posted' && p.status !== 'rejected',
+    );
     const ids = ticked.map((p) => p.id).filter(Boolean);
-    let message = 'No packages selected.';
+    let message = 'No queued packages selected.';
     let ok = false;
     if (ids.length) {
       try {
@@ -1098,17 +1107,23 @@ export default function PlanningApp({ logoSrc }) {
       setState((s) => ({
         ...s,
         packages: s.packages.map((p) =>
-          p.cap_id === capId && !p.done ? { ...p, ticked: !p.ticked } : p,
+          p.cap_id === capId && !p.done && p.status !== 'posted' && p.status !== 'rejected'
+            ? { ...p, ticked: !p.ticked }
+            : p,
         ),
       }));
     },
   };
 
-  const togglePackage = (capId) => {
+  const togglePackage = (pkgId, capId) => {
     engine.markHumanActive();
     setState((s) => ({
       ...s,
-      packages: s.packages.map((p) => (p.cap_id === capId ? { ...p, ticked: !p.ticked } : p)),
+      packages: s.packages.map((p) => {
+        if (pkgId != null ? p.id !== pkgId : p.cap_id !== capId) return p;
+        if (p.done || p.status === 'posted' || p.status === 'rejected') return p;
+        return { ...p, ticked: !p.ticked };
+      }),
     }));
   };
 
@@ -1193,13 +1208,6 @@ export default function PlanningApp({ logoSrc }) {
               onPointerDownCapture={() => engine.markHumanActive()}
               onKeyDownCapture={() => engine.markHumanActive()}
             >
-              <AgentCursor cursor={engine.cursor} />
-              <ConciergeNudgePanel
-                nudges={concierge.nudges}
-                onShowMe={concierge.acceptAndGuide}
-                onDismiss={concierge.dismissNudge}
-                onSnooze={concierge.snoozeNudge}
-              />
               <div id="wsIn">
                 <div className="wtop">
                   <span className="crumb"><b id="crumbTxt">{crumb[0]}</b></span>
@@ -1407,34 +1415,39 @@ export default function PlanningApp({ logoSrc }) {
                     </div>
                     <div className="trihead"><b>Approved plan packages</b><span>tick the ones to execute</span></div>
                     <div className="selbar">
-                      <b id="selCount">{filteredPackages.filter((p) => p.ticked).length} of {filteredPackages.length}</b> selected to execute ·
+                      <b id="selCount">{filteredPackages.filter((p) => p.ticked && !p.done && p.status !== 'posted').length} of {filteredPackages.filter((p) => !p.done && p.status !== 'posted').length}</b> selected to execute ·
                       <span className="mini" data-act="sel-all" onClick={() => handleSelectAllPackages()}>Select all</span>
                       <span className="mini" data-act="sel-none" onClick={() => handleClearPackages()}>Clear</span>
                     </div>
                     <div id="pkgList">
-                      {filteredPackages.map((p) => (
-                        <div
-                          key={p.id}
-                          className={`pkg ${state.revealed.pkg ? 'in' : ''} ${p.ticked ? 'tick' : ''} ${p.done ? 'done' : ''}`}
-                          data-cap={p.cap_id}
-                          onClick={() => togglePackage(p.cap_id)}
-                        >
-                          <span className="cbx"></span>
-                          <div>
-                            <div className="nm"><span className="pill">{p.cap_id}</span>{p.plan_name || p.cap_id}</div>
-                            <div className="sub">{p.description || `OT ${f2(p.ot_hrs)} hrs · loan ${f2(p.xu_fte)} FTE`}</div>
+                      {filteredPackages.map((p) => {
+                        const isPosted = p.done || p.status === 'posted';
+                        return (
+                          <div
+                            key={p.id}
+                            className={`pkg ${state.revealed.pkg ? 'in' : ''} ${p.ticked ? 'tick' : ''} ${isPosted ? 'is-posted' : ''}`}
+                            data-cap={p.cap_id}
+                            data-pkg={p.id}
+                            onClick={() => togglePackage(p.id, p.cap_id)}
+                          >
+                            <span className="cbx"></span>
+                            <div>
+                              <div className="nm"><span className="pill">{p.cap_id}</span>{p.plan_name || p.cap_id}</div>
+                              <div className="sub">{p.description || `OT ${f2(p.ot_hrs)} hrs · loan ${f2(p.xu_fte)} FTE`}</div>
+                            </div>
+                            <span className="st">{isPosted ? 'Posted' : 'Queued'}</span>
                           </div>
-                          <span className="st">{p.status === 'posted' ? 'Posted' : 'Queued'}</span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     <div className={`execbar ${filteredPackages.length ? 'on' : ''}`} style={{ marginTop: 12 }}>
                       <span className="ic">🚀</span>
                       <div>
                         <b>
-                          {filteredPackages.filter((p) => p.ticked).length} of {filteredPackages.length} selected
+                          {filteredPackages.filter((p) => p.ticked && !p.done && p.status !== 'posted').length} of{' '}
+                          {filteredPackages.filter((p) => !p.done && p.status !== 'posted').length} selected
                         </b>
-                        <div className="s">Tick packages below, then execute — nothing posts until you say so</div>
+                        <div className="s">Tick queued packages, then execute — posted ones stay listed for reference</div>
                         <div className="ebchips">
                           {qOTn ? <span className="ebchip">⏱ {f2(qOT)} hrs OT</span> : null}
                           {qXUn ? <span className="ebchip">⇄ {f2(qXU)} FTE</span> : null}
@@ -1461,6 +1474,13 @@ export default function PlanningApp({ logoSrc }) {
                   </div>
                 )}
               </div>
+              <AgentCursor cursor={engine.cursor} />
+              <ConciergeNudgePanel
+                nudges={concierge.nudges}
+                onShowMe={concierge.acceptAndGuide}
+                onDismiss={concierge.dismissNudge}
+                onSnooze={concierge.snoozeNudge}
+              />
             </div>
 
             <aside className={`agent ${state.agentTalk ? 'talk' : ''} ${state.agentHear ? 'hear' : ''}`} id="agent">
