@@ -880,8 +880,10 @@ function ShrinkageTab({
 }) {
   const past = (plan.sShrink || []).map((v, i) => (i <= plan.curIdx ? v : null));
   const [showSeg, setShowSeg] = useState(false);
+  const [adjusting, setAdjusting] = useState(false);
   useEffect(() => {
     setShowSeg(false);
+    setAdjusting(false);
   }, [plan.capId]);
 
   const segs = useMemo(() => segmentShrinkage(plan), [plan]);
@@ -891,7 +893,8 @@ function ShrinkageTab({
     : plan.curIdx;
 
   const displayLine = useMemo(() => {
-    const line = (plan.sShrinkPlan || []).map((v, i) => (i < plan.curIdx ? null : v));
+    // Keep full plan series (incl. past) so hover shows Actual + Plan like the HTML chart.
+    const line = [...(plan.sShrinkPlan || [])];
     editorWeeks.forEach((ew) => {
       if (ew?.weekIdx != null && ew.weekIdx >= plan.curIdx) line[ew.weekIdx] = ew.cur;
     });
@@ -906,11 +909,23 @@ function ShrinkageTab({
   const actual8 = rec.actAvg;
   const variance = actual8 - planFwd;
   const decision = decisions?.shr;
+  const canEdit = adjusting || decision === 'mod';
+
+  useEffect(() => {
+    if (decision === 'mod') setAdjusting(true);
+    if (decision === 'acc' || decision === 'rej') setAdjusting(false);
+  }, [decision]);
 
   const applyDrag = (weekIdx, value) => {
+    if (!canEdit) return;
     const editorIdx = editorWeeks.findIndex((w) => w.weekIdx === weekIdx);
     if (editorIdx < 0) return;
     onEditorChange?.(editorIdx, value, true);
+    onDecide?.('shr', null, 'mod');
+  };
+
+  const openModify = () => {
+    setAdjusting(true);
     onDecide?.('shr', null, 'mod');
   };
 
@@ -922,7 +937,21 @@ function ShrinkageTab({
       <div className="card in">
         <div className="ch">
           <b>Shrinkage trend</b>
-          <span className="tag">8-wk actual vs forward plan</span>
+          <span className="tag" style={{ marginLeft: 0 }}>8-wk actual vs forward plan</span>
+          <button
+            type="button"
+            className="btn-adjust"
+            data-act="shr-adjust"
+            onClick={() => {
+              if (canEdit) {
+                setAdjusting(false);
+              } else {
+                openModify();
+              }
+            }}
+          >
+            ✎ {canEdit ? 'Hide editor' : 'Adjust future weeks'}
+          </button>
         </div>
         <div className="kpis">
           <div className="kpi neg">
@@ -950,19 +979,39 @@ function ShrinkageTab({
             </>
           ) : null}
           <div style={{ fontSize: '.72rem', color: 'var(--dim)', marginTop: 4 }}>
-            Recent 8-wk actual avg {f2(rec.actAvg)}% vs planned {f2(rec.plan)}% over next 12 wk.
-            Graph and sliders are the same 12 weeks. Other tabs update live; Submit writes the plan.
+            {canEdit ? (
+              <>
+                Recent 8-wk actual avg {f2(rec.actAvg)}% vs planned {f2(rec.plan)}% over next 12 wk. Graph and sliders
+                are the same 12 weeks. Your edits stay when you Accept; <b>Submit writes the plan</b> to the backend.
+              </>
+            ) : (
+              <>
+                Recent 8-wk actual avg {f2(rec.actAvg)}% vs planned {f2(rec.plan)}% over next 12 wk. Accept applies the
+                recommendation (~{f2(rec.actAvg)}%), or <b>✎ Modify</b> to set your own value (e.g. 41%), then Submit.
+              </>
+            )}
           </div>
         </div>
         <DecisionBar
           decision={decision}
           onAccept={() => {
-            const target = rec.actAvg;
-            editorWeeks.forEach((ew, k) => onEditorChange?.(k, target, true));
+            // If already editing / customized, keep those values (e.g. 41%).
+            // Only apply the ~actual recommendation when Accepting from a clean state.
+            const customized = editorWeeks.some(
+              (w) => w && Number.isFinite(Number(w.cur)) && Number(w.cur) !== Number(w.base),
+            );
+            if (!canEdit && !customized) {
+              const target = rec.actAvg;
+              editorWeeks.forEach((ew, k) => onEditorChange?.(k, target, true));
+            }
+            setAdjusting(false);
             onDecide?.('shr', null, 'acc');
           }}
-          onModify={() => onDecide?.('shr', null, 'mod')}
-          onReject={() => onDecide?.('shr', null, 'rej')}
+          onModify={openModify}
+          onReject={() => {
+            setAdjusting(false);
+            onDecide?.('shr', null, 'rej');
+          }}
         />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '8px 0' }}>
           <button
@@ -1024,15 +1073,19 @@ function ShrinkageTab({
           tooltipUnit="%"
           bars={[{ label: 'Actual', data: past, color: '#2a78d6' }]}
           line={{ label: 'Plan', data: displayLine, color: '#c98aa0' }}
-          dragFromIdx={plan.curIdx}
-          dragUntilIdx={dragUntilIdx}
+          dragFromIdx={canEdit ? plan.curIdx : null}
+          dragUntilIdx={canEdit ? dragUntilIdx : null}
           snap={0.05}
           minV={0}
           maxV={70}
-          dragHint="↕ Drag plan points for this week through the next 12 (same weeks as the sliders)"
-          onDragPoint={applyDrag}
+          dragHint={
+            canEdit
+              ? '↕ Drag plan points for this week through the next 12 (same weeks as the sliders)'
+              : null
+          }
+          onDragPoint={canEdit ? applyDrag : null}
         />
-        {editorWeeks.length ? (
+        {canEdit && editorWeeks.length ? (
           <ShrinkageEditor
             weeks={editorWeeks}
             billable={plan.billable}
@@ -1062,6 +1115,11 @@ function AttritionTab({
   onApplyPct,
   onDecide,
 }) {
+  const [adjusting, setAdjusting] = useState(false);
+  useEffect(() => {
+    setAdjusting(false);
+  }, [plan.capId]);
+
   const past = (plan.sAttr || []).slice(Math.max(0, plan.curIdx - 8), plan.curIdx + 1).filter((v) => v != null);
   const avg = past.length ? past.reduce((a, b) => a + b, 0) / past.length : plan.attr12 || 0;
   const attrWeeks = state.attrWeeks || [];
@@ -1070,7 +1128,8 @@ function AttritionTab({
     : plan.curIdx;
 
   const displayLine = useMemo(() => {
-    const line = (plan.sAttrPlan || []).map((v, i) => (i < plan.curIdx ? null : v));
+    // Keep full plan series (incl. past) so hover shows Actual + Plan like the HTML chart.
+    const line = [...(plan.sAttrPlan || [])];
     attrWeeks.forEach((ew) => {
       if (ew?.weekIdx != null && ew.weekIdx >= plan.curIdx) line[ew.weekIdx] = ew.cur;
     });
@@ -1094,6 +1153,7 @@ function AttritionTab({
       : null;
 
   const applyDrag = (weekIdx, value) => {
+    if (!adjusting) return;
     const editorIdx = attrWeeks.findIndex((w) => w.weekIdx === weekIdx);
     if (editorIdx < 0) return;
     onEditorChange?.(editorIdx, value);
@@ -1106,7 +1166,15 @@ function AttritionTab({
       <div className="card in">
         <div className="ch">
           <b>Attrition trend</b>
-          <span className="tag">production attrition</span>
+          <span className="tag" style={{ marginLeft: 0 }}>production attrition</span>
+          <button
+            type="button"
+            className="btn-adjust"
+            data-act="att-adjust"
+            onClick={() => setAdjusting((v) => !v)}
+          >
+            ✎ {adjusting ? 'Hide editor' : 'Adjust future weeks'}
+          </button>
         </div>
         <div className="kpis">
           <div className="kpi">
@@ -1126,25 +1194,45 @@ function AttritionTab({
           </div>
         </div>
         <div className="insight info" style={{ marginTop: 8 }}>
-          This week plan {f2(plannedThis)}%. Attrition % × stock FTE leaves the projection; later weeks inherit that loss.
-          Graph and sliders are the same 12 weeks. Overview / Recommend / New Hire update live; Submit writes the plan.
+          {adjusting ? (
+            <>
+              This week plan {f2(plannedThis)}%. Attrition % × stock FTE leaves the projection; later weeks inherit that
+              loss. Graph and sliders are the same 12 weeks. Overview / Recommend / New Hire update live; Submit writes
+              the plan.
+            </>
+          ) : (
+            <>
+              Production attrition — last 8 weeks actual vs next 12 weeks plan. Click{' '}
+              <b>✎ Adjust future weeks</b> to drag the plan line or edit week-by-week rates.
+            </>
+          )}
         </div>
         <SeriesChart
           weeks={plan.weeks}
           curIdx={plan.curIdx}
           height={200}
           yFmt={(v) => `${f2(v)}%`}
-          bars={[{ label: 'Actual', data: act, color: '#2a78d6' }]}
-          line={{ label: 'Plan', data: displayLine, color: '#2b2f36' }}
-          dragFromIdx={plan.curIdx}
-          dragUntilIdx={dragUntilIdx}
+          bars={[{ label: 'Actual', tipLabel: 'Actual', data: act, color: '#2a78d6' }]}
+          line={{
+            label: 'Plan',
+            tipLabel: 'Plan trend',
+            data: displayLine,
+            color: '#2b2f36',
+            dash: '5 4',
+          }}
+          dragFromIdx={adjusting ? plan.curIdx : null}
+          dragUntilIdx={adjusting ? dragUntilIdx : null}
           snap={0.1}
           minV={0}
           maxV={40}
-          dragHint="↕ Drag plan points for this week through the next 12 (same weeks as the sliders)"
-          onDragPoint={applyDrag}
+          dragHint={
+            adjusting
+              ? '↕ Drag plan points for this week through the next 12 (same weeks as the sliders)'
+              : null
+          }
+          onDragPoint={adjusting ? applyDrag : null}
         />
-        {attrWeeks.length ? (
+        {adjusting && attrWeeks.length ? (
           <div className="edit">
             <div className="enote">
               <b>Adjust forward weeks</b> · next {attrWeeks.length} wk · attr FTE = stock × rate · New O/U uses live
