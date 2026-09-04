@@ -189,6 +189,17 @@ export default function SeriesChart({
       >
         {grid}
         {zeroLine ? <line className="zl" x1={L} y1={zy} x2={W - R} y2={zy} /> : null}
+        {Array.from({ length: n }, (_, i) => (
+          <rect
+            key={`hit${i}`}
+            x={L + bw * i}
+            y={T}
+            width={bw}
+            height={Math.max(1, H - T - B)}
+            fill="transparent"
+            onMouseEnter={() => setHoverI(i)}
+          />
+        ))}
         {bars.map((series, si) =>
           (series.data || []).map((v, i) => {
             if (v == null) return null;
@@ -208,6 +219,7 @@ export default function SeriesChart({
                   rx={barW / 2}
                   fill={color}
                   opacity={dim ? 0.38 : hoverI === i ? 1 : 0.92}
+                  style={{ pointerEvents: 'none' }}
                 />
               );
             }
@@ -223,12 +235,13 @@ export default function SeriesChart({
                 rx={barW / 2}
                 fill={color}
                 opacity={dim ? 0.38 : hoverI === i ? 1 : 0.92}
+                style={{ pointerEvents: 'none' }}
               />
             );
           }),
         )}
         {linePath ? (
-          <path d={linePath} fill="none" stroke={line.color || '#c98aa0'} strokeWidth="2" strokeDasharray={line.dash || undefined} />
+          <path d={linePath} fill="none" stroke={line.color || '#c98aa0'} strokeWidth="2" strokeDasharray={line.dash || undefined} style={{ pointerEvents: 'none' }} />
         ) : null}
         {lineData &&
           lineData.map((v, i) => {
@@ -245,7 +258,7 @@ export default function SeriesChart({
                 fill={line.color || '#c98aa0'}
                 stroke="#fff"
                 strokeWidth="1.2"
-                style={{ cursor: draggable ? 'ns-resize' : 'default' }}
+                style={{ cursor: draggable ? 'ns-resize' : 'default', pointerEvents: draggable ? 'all' : 'none' }}
                 onPointerDown={(e) => onDragStart(i, e)}
                 onMouseDown={(e) => onDragStart(i, e)}
               />
@@ -261,31 +274,20 @@ export default function SeriesChart({
               stroke="#f5a623"
               strokeWidth="1.5"
               strokeDasharray="4 3"
+              style={{ pointerEvents: 'none' }}
             />
-            <text x={L + bw * curIdx + bw * 0.5} y={T - 4} textAnchor="middle" fill="#f5a623" style={{ fontSize: 9, fontWeight: 700 }}>
+            <text x={L + bw * curIdx + bw * 0.5} y={T - 4} textAnchor="middle" fill="#f5a623" style={{ fontSize: 9, fontWeight: 700, pointerEvents: 'none' }}>
               THIS WK
             </text>
           </>
         ) : null}
         {weeks.map((wk, i) =>
           i % 2 === 0 || i === n - 1 ? (
-            <text key={`x${i}`} className="al" x={L + bw * i + bw * 0.5} y={H - 7} textAnchor="middle">
+            <text key={`x${i}`} className="al" x={L + bw * i + bw * 0.5} y={H - 7} textAnchor="middle" style={{ pointerEvents: 'none' }}>
               {wk}
             </text>
           ) : null,
         )}
-        {Array.from({ length: n }, (_, i) => (
-          <rect
-            key={`hit${i}`}
-            x={L + bw * i}
-            y={T}
-            width={bw}
-            height={Math.max(1, H - T - B)}
-            fill="transparent"
-            style={{ pointerEvents: canDrag ? 'none' : 'all' }}
-            onMouseEnter={() => setHoverI(i)}
-          />
-        ))}
       </svg>
       {hoverTips.length ? (
         <div

@@ -150,6 +150,7 @@ export default function PlanningApp({ logoSrc }) {
   const [planDecisions, setPlanDecisions] = useState({});
   const [otWeeksByCap, setOtWeeksByCap] = useState({});
   const paneRef = useRef(null);
+  const planMainRef = useRef(null);
   const chatTimelineRef = useRef(null);
   const chatFileRef = useRef(null);
   const stateRef = useRef(null);
@@ -414,7 +415,8 @@ export default function PlanningApp({ logoSrc }) {
 
   useEffect(() => {
     if (paneRef.current) paneRef.current.scrollTop = 0;
-  }, [state.view, state.filter]);
+    if (planMainRef.current) planMainRef.current.scrollTop = 0;
+  }, [state.view, state.filter, state.activePlan, state.activeTab]);
 
   const activePlan = useMemo(() => data.find((p) => p.capId === state.activePlan), [data, state.activePlan]);
 
@@ -1345,7 +1347,7 @@ export default function PlanningApp({ logoSrc }) {
                           setState((s) => ({ ...s, view: 'port' }));
                         }}
                       />
-                      <div>
+                      <div className="plan-main" ref={planMainRef}>
                         <PlanStepper
                           plan={activePlan}
                           activeTab={state.activeTab}
