@@ -1,7 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { f2 } from '../utils/format';
 import { kpiTrends, ouColor, planRec, statusOf, weeks12 } from '../utils/planLogic';
 import SeriesChart, { KpiTrendCard } from './SeriesChart';
+
+function statLabel(plan) {
+  const st = statusOf(plan);
+  if (st === 'critical' || st === 'under') return 'Understaffed';
+  if (st === 'surplus') return 'Surplus';
+  return 'Balanced';
+}
+
+function statCls(plan) {
+  const st = statusOf(plan);
+  if (st === 'critical' || st === 'under') return 'under';
+  if (st === 'surplus') return 'sur';
+  return 'bal';
+}
 
 function recShort(plan, gotBy) {
   const st = statusOf(plan);
@@ -10,28 +24,40 @@ function recShort(plan, gotBy) {
   const peak = s.length ? Math.min(0, ...s) : 0;
   if (st === 'under' || st === 'critical') {
     const r = planRec(plan, { gotBy });
-    return { cls: 'neg', t: `Short ~${f2(r.gap)} FTE · OT ${f2(r.otFTE)} + cross-util ${f2(r.xr)} + hire ${r.starts}` };
+    return { cls: 'bad', t: `Short ~${f2(r.gap)} FTE · OT ${f2(r.otFTE)} + cross-util ${f2(r.xr)} + hire ${r.starts}` };
   }
   if (w.under >= 2) {
     return { cls: 'warn', t: `${w.under} of 12 wks short (peak ${f2(peak)} FTE) — OT / redistribute to cover` };
   }
   if (st === 'surplus') {
-    return { cls: 'pos', t: `Surplus — lend up to ${f2(Math.max(0, plan.minOUfwd - 1))} FTE (cross-util)` };
+    return { cls: 'good', t: `Surplus — lend up to ${f2(Math.max(0, plan.minOUfwd - 1))} FTE (cross-util)` };
   }
-  return { cls: 'mut', t: 'On plan — no shortfall weeks' };
+  return { cls: 'warn', t: 'On plan — no shortfall weeks' };
 }
 
-function underOverBars(plan) {
+function sparkBars(plan) {
   const s = (plan.sOU || []).slice(plan.curIdx, plan.curIdx + 12);
-  const under = s.filter((v) => v < -0.5).length;
-  const over = s.filter((v) => v > 0.5).length;
-  return { under, over, n: s.length };
+  let u = 0;
+  let o = 0;
+  const bars = s.map((v) => {
+    if (v < -0.5) {
+      u += 1;
+      return 'u';
+    }
+    if (v > 0.5) {
+      o += 1;
+      return 'o';
+    }
+    return '';
+  });
+  const na = Math.max(0, 12 - s.length);
+  for (let k = 0; k < na; k += 1) bars.push('na');
+  return { bars, u, o, na };
 }
 
-function PlanExpandDetail({ plan, onOpenDetail }) {
+function PlanExpandDetail({ plan, onOpenDetail, gotBy }) {
   const trends = kpiTrends(plan);
-  const rc = recShort(plan);
-  const ouNow = plan.ouShrink ?? plan.sOU?.[plan.curIdx] ?? plan.ou ?? 0;
+  const rc = recShort(plan, gotBy);
 
   return (
     <div className="land-detail" data-cap-detail={plan.capId}>
@@ -70,10 +96,10 @@ function PlanExpandDetail({ plan, onOpenDetail }) {
         />
         <KpiTrendCard
           heading="O/U with shrinkage"
-          value={ouNow}
+          value={plan.ouShrink ?? plan.sOU?.[plan.curIdx] ?? plan.ou ?? 0}
           caption={`vs billable ${f2(plan.ou)}`}
-          color={ouNow < 0 ? '#e0483f' : '#1a9e6a'}
-          tone={ouNow < 0 ? 'neg' : 'pos'}
+          color={(plan.ouShrink ?? plan.sOU?.[plan.curIdx] ?? plan.ou ?? 0) < 0 ? '#e0483f' : '#1a9e6a'}
+          tone={(plan.ouShrink ?? plan.sOU?.[plan.curIdx] ?? plan.ou ?? 0) < 0 ? 'neg' : 'pos'}
           values={trends.ou.values}
           weeks={trends.ou.weeks}
           markIdx={trends.ou.mark}
@@ -97,7 +123,7 @@ function PlanExpandDetail({ plan, onOpenDetail }) {
         ]}
       />
       <div className="land-detail-foot">
-        <span className={`recchip ${rc.cls}`}>{rc.t}</span>
+        <span className={`rec ${rc.cls}`}>{rc.t}</span>
         <button type="button" className="btn p" data-act="open-detail" onClick={() => onOpenDetail(plan.capId)}>
           Open detailed analysis →
         </button>
@@ -109,15 +135,17 @@ function PlanExpandDetail({ plan, onOpenDetail }) {
 export default function PortfolioLanding({
   plans = [],
   programs = [],
-  filter = 'all',
   search = '',
   expandAll = false,
-  triageCounts = { dec: 0, auto: 0, quiet: 0 },
+  packages = [],
+  execDone = false,
   onOpenPlan,
+  onOpenQueue,
   gotBy = {},
 }) {
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [expanded, setExpanded] = useState(() => new Set());
+  const [focusCap, setFocusCap] = useState(null);
 
   const filtered = useMemo(() => plans, [plans]);
 
@@ -148,6 +176,22 @@ export default function PortfolioLanding({
     return st === 'under' || st === 'critical' || w.under >= 2;
   }).length;
 
+  const nUnder = filtered.filter((p) => {
+    const st = statusOf(p);
+    return st === 'under' || st === 'critical';
+  }).length;
+  const nSurplus = filtered.filter((p) => statusOf(p) === 'surplus').length;
+  const nRoster = filtered.filter(
+    (p) => p.cls && (p.cls.status === 'missing' || p.cls.status === 'partial'),
+  ).length;
+  const netOu = filtered.reduce((a, p) => a + (p.sustained || 0), 0);
+
+  const queued = packages.filter((p) => !p.done && p.status !== 'rejected' && p.status !== 'posted');
+  const queuedPlans = new Set(queued.map((p) => p.cap_id));
+  const otN = queued.filter((p) => (p.ot_hrs || 0) > 0).length;
+  const xuN = queued.filter((p) => (p.xu_fte || 0) > 0).length;
+  const hrN = queued.filter((p) => (p.hire_count || 0) > 0).length;
+
   const toggleProg = (name) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
@@ -158,6 +202,7 @@ export default function PortfolioLanding({
   };
 
   const togglePlan = (capId) => {
+    setFocusCap(capId);
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(capId)) next.delete(capId);
@@ -168,103 +213,197 @@ export default function PortfolioLanding({
 
   return (
     <div className="land" data-view="port-landing">
-      <div className="land-bar">
-        <div className="land-title">
-          Portfolio — grouped by Program{' '}
-          <span className="land-sub">
-            · {groups.length} programs · sorted by priority
+      <div>
+        <div className="ltitle">
+          Portfolio — CAP plans by Program{' '}
+          <span className="lsub">
+            · grouped by Program, most-deficit first
             {nPri ? (
               <>
                 {' '}
-                · <b className="neg-t">{nPri} need attention</b>
+                · <b style={{ color: 'var(--neg)' }}>{nPri} need attention</b>
               </>
             ) : null}
           </span>
         </div>
-        <div className="land-triage">
-          <span>
-            Decide <b>{triageCounts.dec}</b>
-          </span>
-          <span>
-            Autopilot <b>{triageCounts.auto}</b>
-          </span>
-          <span>
-            Quiet <b>{triageCounts.quiet}</b>
-          </span>
-        </div>
       </div>
 
-      {groups.map((g) => {
-        const col = collapsed.has(g.name);
-        const net = g.plans.reduce((a, p) => a + (p.ou || 0), 0);
-        const need = g.plans.filter((p) => {
-          const st = statusOf(p);
-          return st === 'under' || st === 'critical' || weeks12(p).under >= 2;
-        }).length;
-        return (
-          <div key={g.name} className="land-prog" data-prog={g.name}>
-            <button type="button" className={`land-gh ${col ? 'col' : ''}`} onClick={() => toggleProg(g.name)}>
-              <span className="gh-caret">{col ? '▸' : '▾'}</span>
-              <span className="gh-name">{g.name}</span>
-              <span className="gh-meta">
-                {g.plans.length} plan{g.plans.length === 1 ? '' : 's'} · net O/U{' '}
-                <b className={net < 0 ? 'neg-t' : 'pos-t'}>
-                  {net >= 0 ? '+' : ''}
-                  {f2(net)}
-                </b>
-                {need ? (
-                  <>
-                    {' '}
-                    · <b className="neg-t">{need} need attention</b>
-                  </>
-                ) : null}
-              </span>
-            </button>
-            {!col
-              ? g.plans.map((p) => {
-                  const ex = expanded.has(p.capId);
-                  const bars = underOverBars(p);
-                  const rc = recShort(p, gotBy);
-                  return (
-                    <div key={p.capId} className={`land-row ${ex ? 'exp' : ''}`} data-cap={p.capId}>
-                      <button type="button" className="land-row-main" onClick={() => togglePlan(p.capId)}>
-                        <span className="caret">{ex ? '▼' : '▶'}</span>
-                        <span className="capchip">{p.capId}</span>
-                        <span className="nm">
-                          {p.plan}
-                          {p.cls && (p.cls.status === 'missing' || p.cls.status === 'partial') ? (
-                            <span className="flag">roster</span>
-                          ) : null}
-                        </span>
-                        <span className={`mono ${p.sustained < 0 ? 'neg-t' : 'pos-t'}`}>{f2(p.sustained)}</span>
-                        <span className="uo">
-                          <b className="neg-t">{bars.under}</b> under · <b className="pos-t">{bars.over}</b> over
-                        </span>
-                        <span className={`recchip ${rc.cls}`}>{rc.t}</span>
-                        <span
-                          className="open-mini"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenPlan?.(p.capId);
-                          }}
-                        >
-                          Open →
-                        </span>
-                      </button>
-                      {ex ? <PlanExpandDetail plan={p} onOpenDetail={onOpenPlan} /> : null}
-                    </div>
-                  );
-                })
-              : null}
-          </div>
-        );
-      })}
+      <div className="tiles">
+        <span className="tile">
+          <b>{filtered.length}</b> Active
+        </span>
+        <span className="tile neg">
+          <b>{nUnder}</b> Understaffed
+        </span>
+        <span className="tile pos">
+          <b>{nSurplus}</b> Surplus
+        </span>
+        <span className="tile warn">
+          <b>{nRoster}</b> Roster gaps
+        </span>
+        <span className="tile pos">
+          <b>{netOu >= 0 ? '+' : ''}{f2(netOu)}</b> Net O/U
+        </span>
+      </div>
 
-      {!groups.length ? (
-        <div className="fold in" style={{ opacity: 1, transform: 'none' }}>
-          <b>No plans match</b> — try clearing search or changing the program filter
+      <div className={`execbar ${queued.length ? 'on' : ''}`} id="execBar">
+        <span className="ic">🚀</span>
+        <div id="ebTx">
+          {queued.length ? (
+            <>
+              <b>
+                {queued.length} approved package(s) across {queuedPlans.size} plan(s)
+              </b>{' '}
+              ready to execute in one go
+              <div className="ebchips">
+                {otN ? <span className="ebchip">⏱ {otN} OT</span> : null}
+                {xuN ? <span className="ebchip">⇄ {xuN} cross-util</span> : null}
+                {hrN ? <span className="ebchip">🎓 {hrN} hire</span> : null}
+              </div>
+            </>
+          ) : (
+            <div className="s">Accept recommendations on individual plans to queue packages here</div>
+          )}
         </div>
-      ) : null}
+        <button type="button" className="btn w" data-act="exec-all" onClick={() => onOpenQueue?.()}>
+          Review &amp; execute all →
+        </button>
+      </div>
+
+      <div className={`ok ${execDone ? 'on' : ''}`} id="execOk">
+        <span>✓</span>
+        <span>Posted to CAP-ABILITY · planners notified · every action reversible from the ledger for 24 hours</span>
+      </div>
+
+      <div className="ptbl">
+        <div className="phead">
+          <span>CAP plan</span>
+          <span>Avg FTE O/U</span>
+          <span>Next 12 wks</span>
+          <span>Status</span>
+          <span>Recommendation</span>
+          <span></span>
+        </div>
+
+        {groups.map((g) => {
+          const col = collapsed.has(g.name);
+          const net12 = g.plans.reduce((a, p) => a + (p.sustained || 0), 0);
+          const need = g.plans.filter((p) => {
+            const st = statusOf(p);
+            return st === 'under' || st === 'critical';
+          }).length;
+
+          return (
+            <Fragment key={g.name}>
+              <button
+                type="button"
+                className="gband"
+                data-prog={g.name}
+                onClick={() => toggleProg(g.name)}
+              >
+                <b>{g.name}</b>
+                <span>
+                  {g.plans.length} plan{g.plans.length === 1 ? '' : 's'}
+                  {need ? (
+                    <>
+                      {' '}
+                      · <b style={{ color: 'var(--neg)' }}>{need} need attention</b>
+                    </>
+                  ) : null}
+                  {' '}
+                  · net 12-wk O/U{' '}
+                  <b style={{ color: net12 >= 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                    {net12 >= 0 ? '+' : ''}
+                    {f2(net12)}
+                  </b>
+                </span>
+                <span className="nou">{col ? '▸' : '▾'}</span>
+              </button>
+
+              {!col
+                ? g.plans.map((p) => {
+                    const ex = expanded.has(p.capId);
+                    const sp = sparkBars(p);
+                    const rc = recShort(p, gotBy);
+                    const subLine = [p.lob || p.region, (p.site || '').replace(/-$/, '')].filter(Boolean).join(' › ');
+
+                    return (
+                      <Fragment key={p.capId}>
+                        <button
+                          type="button"
+                          className={`prow ${ex || focusCap === p.capId ? 'focus' : ''}`}
+                          data-cap={p.capId}
+                          data-prog={g.name}
+                          onClick={() => togglePlan(p.capId)}
+                        >
+                          <div>
+                            <div className="pn">
+                              <span className="pp">{p.capId}</span>
+                              {p.plan}
+                              {p.cls && (p.cls.status === 'missing' || p.cls.status === 'partial') ? (
+                                <span className="flag">roster</span>
+                              ) : null}
+                            </div>
+                            {subLine ? <div className="pb">{subLine}</div> : null}
+                          </div>
+                          <div className={`pv ${p.sustained < 0 ? 'neg' : 'pos'}`}>
+                            {p.sustained > 0 ? '+' : ''}
+                            {f2(p.sustained)}
+                          </div>
+                          <div>
+                            <div className="spark">
+                              {sp.bars.map((kind, i) => (
+                                <i key={i} className={kind || undefined} />
+                              ))}
+                            </div>
+                            <div className="scount">
+                              {sp.u} under · {sp.o} over{sp.na ? ` · ${sp.na} n/a` : ''}
+                            </div>
+                          </div>
+                          <div>
+                            <span className={`stat ${statCls(p)}`}>{statLabel(p)}</span>
+                          </div>
+                          <div>
+                            <span className={`rec ${rc.cls}`}>{rc.t}</span>
+                          </div>
+                          <div>
+                            <span
+                              className="openb"
+                              data-open={p.capId}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenPlan?.(p.capId);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.stopPropagation();
+                                  onOpenPlan?.(p.capId);
+                                }
+                              }}
+                              role="button"
+                              tabIndex={0}
+                            >
+                              Open →
+                            </span>
+                          </div>
+                        </button>
+                        {ex ? (
+                          <PlanExpandDetail plan={p} onOpenDetail={onOpenPlan} gotBy={gotBy} />
+                        ) : null}
+                      </Fragment>
+                    );
+                  })
+                : null}
+            </Fragment>
+          );
+        })}
+
+        {!groups.length ? (
+          <div className="fold in" style={{ opacity: 1, transform: 'none', margin: 12 }}>
+            <b>No plans match</b> — try clearing search or changing the program filter
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

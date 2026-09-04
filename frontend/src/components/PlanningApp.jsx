@@ -17,7 +17,8 @@ import AgentAvatar from './AgentAvatar';
 import PlanSearchBar from './PlanSearchBar';
 import { filterPlans, matchesPlanSearch } from '../utils/planSearch';
 import ConciergeNudgePanel from './ConciergeNudgePanel';
-import PlanTabs, { TAB_LABELS, tabsForPlan } from './plan/PlanTabs';
+import PlanTabs from './plan/PlanTabs';
+import { PlanHeader, PlanRail, PlanStepper } from './plan/PlanViewChrome';
 import PortfolioLanding from './PortfolioLanding';
 import CreatePlanPanel from './CreatePlanPanel';
 import { computeXutil, defaultOtWeekly, fwdCount, hireTiming, planRecWithWeekly, scaleDonorsToXu } from '../utils/planLogic';
@@ -1112,11 +1113,11 @@ export default function PlanningApp({ logoSrc }) {
   };
 
   const crumb = {
-    port: ['Portfolio — grouped by Program', `${data.length} plans`],
-    plan: ['CP FTE Based · detailed analysis', state.activePlan],
+    port: ['Portfolio — CAP plans by Program', `${filteredData.length} plans`],
+    plan: activePlan ? [`${activePlan.plan} · plan summary`, cycleLabel] : ['Plan · summary', cycleLabel],
     queue: ['Review & execute', 'action queue'],
     time: ['Time & memory', 'ledger'],
-  }[state.view] || ['Portfolio — grouped by Program', '11 plans'];
+  }[state.view] || ['Portfolio — CAP plans by Program', `${data.length} plans`];
 
   const steps = buildScenarioSteps(SCENARIOS[engine.scenarioIdx]?.key, {});
   const localStepLabel =
@@ -1226,6 +1227,7 @@ export default function PlanningApp({ logoSrc }) {
                   <span className={`saved ${state.savedBump ? 'bump' : ''}`} id="savedChip">⏱ <span id="saveTxt">{hm(state.savedMin)} saved</span></span>
                 </div>
 
+                {state.view !== 'plan' ? (
                 <div className="filters">
                   <span
                     className={`sel ${state.filter === 'all' ? 'on' : ''}`}
@@ -1283,6 +1285,7 @@ export default function PlanningApp({ logoSrc }) {
                     + New Cap Plan
                   </button>
                 </div>
+                ) : null}
 
                 <CreatePlanPanel
                   open={state.createPlan.open}
@@ -1306,12 +1309,10 @@ export default function PlanningApp({ logoSrc }) {
                       filter={state.filter}
                       search={searchQuery}
                       expandAll={Boolean(searchQuery.trim())}
-                      triageCounts={{
-                        dec: filteredDec.length,
-                        auto: filteredAuto.length,
-                        quiet: filteredQuiet.length,
-                      }}
+                      packages={state.packages}
+                      execDone={state.execDone}
                       gotBy={computeXutil(data).gotBy}
+                      onOpenQueue={handleOpenQueue}
                       onOpenPlan={(capId) => {
                         engine.markHumanActive();
                         domHandlersRef.current.openPlan?.(capId);
@@ -1322,53 +1323,65 @@ export default function PlanningApp({ logoSrc }) {
 
                 {state.view === 'plan' && activePlan && (
                   <div className="pane on" data-view="plan" ref={paneRef}>
-                    <div className="tabs">
-                      <span className="lb">{tabsForPlan(activePlan).length} steps</span>
-                      <div className="tab-list">
-                        {tabsForPlan(activePlan).map((k) => (
-                          <span
-                            key={k}
-                            className={`tab ${state.shownTabs.includes(k) ? 'shown' : ''} ${state.activeTab === k ? 'on' : ''}`}
-                            data-tab={k}
-                            onClick={() => {
-                              engine.markHumanActive();
-                              handleTabClick(k);
-                            }}
-                          >
-                            {TAB_LABELS[k]}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="tp-body">
-                      <PlanTabs
-                        activeTab={state.activeTab}
-                        plan={activePlan}
-                        state={state}
-                        allPlans={data}
-                        decisions={planDecisions[activePlan.capId] || {}}
-                        otWeeks={otWeeksByCap[activePlan.capId] || []}
-                        onEditorChange={setEditorWeek}
-                        onSubmitShrinkage={handleSubmitShrinkage}
-                        onResetShrinkage={handleResetShrinkage}
-                        onApplyShrinkageValue={handleApplyShrinkageValue}
-                        onApplyShrinkagePct={handleApplyShrinkagePct}
-                        onSubmitAttrition={handleSubmitAttrition}
-                        onResetAttrition={handleResetAttrition}
-                        onApplyAttritionValue={handleApplyAttritionValue}
-                        onApplyAttritionPct={handleApplyAttritionPct}
-                        onAttritionChange={setAttrWeek}
-                        onSubmitForecast={handleSubmitForecast}
-                        onSaveHeadcount={handleSaveHeadcount}
-                        onMapRoster={handleMapRoster}
-                        onAcceptRec={handleAcceptRec}
-                        onRejectRec={handleRejectRec}
-                        onOpenQueue={handleOpenQueue}
-                        onDecide={handleDecide}
-                        onOtWeekChange={handleOtWeekChange}
-                        onExecutePlan={handleExecutePlan}
-                        onRecOverride={handleRecOverride}
+                    <div className="split">
+                      <PlanRail
+                        plans={filteredData}
+                        activeCapId={activePlan.capId}
+                        focusedPlan={activePlan}
+                        onSelectPlan={(capId) => {
+                          engine.markHumanActive();
+                          domHandlersRef.current.openPlan?.(capId);
+                        }}
+                        onBackPortfolio={() => {
+                          engine.markHumanActive();
+                          setState((s) => ({ ...s, view: 'port' }));
+                        }}
                       />
+                      <div>
+                        <PlanStepper
+                          plan={activePlan}
+                          activeTab={state.activeTab}
+                          shownTabs={state.shownTabs}
+                          onTabClick={(k) => {
+                            engine.markHumanActive();
+                            handleTabClick(k);
+                          }}
+                        />
+                        <PlanHeader plan={activePlan} />
+                        <div className="tp-body">
+                          <PlanTabs
+                            activeTab={state.activeTab}
+                            plan={activePlan}
+                            state={state}
+                            allPlans={data}
+                            packages={state.packages}
+                            decisions={planDecisions[activePlan.capId] || {}}
+                            otWeeks={otWeeksByCap[activePlan.capId] || []}
+                            onEditorChange={setEditorWeek}
+                            onSubmitShrinkage={handleSubmitShrinkage}
+                            onResetShrinkage={handleResetShrinkage}
+                            onApplyShrinkageValue={handleApplyShrinkageValue}
+                            onApplyShrinkagePct={handleApplyShrinkagePct}
+                            onSubmitAttrition={handleSubmitAttrition}
+                            onResetAttrition={handleResetAttrition}
+                            onApplyAttritionValue={handleApplyAttritionValue}
+                            onApplyAttritionPct={handleApplyAttritionPct}
+                            onAttritionChange={setAttrWeek}
+                            onSubmitForecast={handleSubmitForecast}
+                            onSaveHeadcount={handleSaveHeadcount}
+                            onMapRoster={handleMapRoster}
+                            onAcceptRec={handleAcceptRec}
+                            onRejectRec={handleRejectRec}
+                            onOpenQueue={handleOpenQueue}
+                            onDecide={handleDecide}
+                            onOtWeekChange={handleOtWeekChange}
+                            onExecutePlan={handleExecutePlan}
+                            onRecOverride={handleRecOverride}
+                            onGoTab={handleTabClick}
+                            onBackPortfolio={() => setState((s) => ({ ...s, view: 'port' }))}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1415,12 +1428,27 @@ export default function PlanningApp({ logoSrc }) {
                         </div>
                       ))}
                     </div>
-                    <div className="acts" style={{ marginTop: 12 }}>
-                      <div className="btn p" data-act="exec" onClick={() => handleExecuteSelected()}>
-                        Execute selected →
+                    <div className={`execbar ${filteredPackages.length ? 'on' : ''}`} style={{ marginTop: 12 }}>
+                      <span className="ic">🚀</span>
+                      <div>
+                        <b>
+                          {filteredPackages.filter((p) => p.ticked).length} of {filteredPackages.length} selected
+                        </b>
+                        <div className="s">Tick packages below, then execute — nothing posts until you say so</div>
+                        <div className="ebchips">
+                          {qOTn ? <span className="ebchip">⏱ {f2(qOT)} hrs OT</span> : null}
+                          {qXUn ? <span className="ebchip">⇄ {f2(qXU)} FTE</span> : null}
+                          {qHRn ? <span className="ebchip">🎓 {qHR} agents</span> : null}
+                        </div>
                       </div>
+                      <button type="button" className="btn w" data-act="exec" onClick={() => handleExecuteSelected()}>
+                        Execute selected →
+                      </button>
                     </div>
-                    <div className={`done ${state.execDone ? 'on' : ''}`} id="execDone"><span>✓</span><span>Packages posted to CAP-ABILITY</span></div>
+                    <div className={`ok ${state.execDone ? 'on' : ''}`} id="execDone">
+                      <span>✓</span>
+                      <span>Packages posted to CAP-ABILITY</span>
+                    </div>
                   </div>
                 )}
 

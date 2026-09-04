@@ -1,0 +1,50 @@
+
+Re-optimizing dependencies because lockfile has changed
+
+  VITE v5.4.21  ready in 560 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+  ➜  press h + enter to show help
+Error: The following dependencies are imported but could not be resolved:
+
+  react-router-dom (imported by /Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concier
+  react-router-dom (imported by /Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/src/App.jsx)
+
+Are they installed?
+    at file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_m
+    at file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:50669:15
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierg    at async file:///Users/yanthraa/Desktop/Datanitiv_agents/gents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:50174:26
+9:11:33 AM [vite] Pre-transform error: Failed to resolve import "react-router-dom" from "src/App
+9:11:33 AM [vite] Pre-transform error: Failed to resolve import "react-router-dom" from "src/App.jsx". Does the file exist?
+9:11:33 AM [vite] Internal server error: Failed to resolve import "react-router-dom" from "src/A
+9:11:33 AM [vite] Internal server error: Failed to resolve import "react-router-dom" from "src/App.jsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/src/App.jsx:
+  File: /Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/src/App.jsx:1:45
+  15 |    window.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+  16 |  }
+  17 |  import { BrowserRouter, Route, Routes } from "react-router-dom";
+     |                                                ^
+  18 |  import PlanningApp from "./components/PlanningApp";
+  19 |  import CostPage from "./pages/CostPage";
+      at TransformPluginContext._formatError (file:///Users/yanthraa/Desktop/Datanitiv_agents/20
+      at TransformPluginContext._formatError (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49258:41)
+      at TransformPluginContext.error (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Dat
+      at TransformPluginContext.error (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49253:16)
+      at normalizeUrl (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge
+      at normalizeUrl (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:64307:23)
+      at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+      at async file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/fronten
+      at async file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:64439:39
+      at async Promise.all (index 3)
+      at async TransformPluginContext.transform (file:///Users/yanthraa/Desktop/Datanitiv_agents
+      at async TransformPluginContext.transform (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:64366:7)
+      at async PluginContainer.transform (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/
+      at async PluginContainer.transform (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49099:18)
+      at async loadAndTransform (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv
+      at async loadAndTransform (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51978:27)
+      at async viteTransformMiddleware (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Da
+      at async viteTransformMiddleware (file:///Users/yanthraa/Desktop/Datanitiv_agents/20aug/Datanitiv-Concierge/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:62106:24)
+^C[200~npm install react-router-dom

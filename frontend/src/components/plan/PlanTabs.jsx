@@ -42,6 +42,23 @@ const TAB_LABELS = {
   exe: 'Execute',
 };
 
+export const PEEK_TAGS = {
+  ov: 'Overview · KPI signals',
+  fw: 'Forecast · volume & AHT',
+  hc: 'Step 2 · agent skipped this one',
+  nh: 'Step 3 · this one does matter',
+  shr: 'Step 4 · the cause',
+  att: 'Step 5 · agent skipped this one',
+  rec: 'Step 6 · the package',
+  exe: 'Step 7 · nothing posts until you say so',
+};
+
+function TabPeek({ tab }) {
+  const text = PEEK_TAGS[tab];
+  if (!text) return null;
+  return <span className="peektag">{text}</span>;
+}
+
 export { TAB_LABELS };
 
 export function tabsForPlan(plan) {
@@ -49,63 +66,170 @@ export function tabsForPlan(plan) {
   return plan.isVol ? Object.keys(TAB_LABELS) : Object.keys(TAB_LABELS).filter((k) => k !== 'fw');
 }
 
-function OverviewTab({ plan }) {
-  const trends = kpiTrends(plan);
-  const ouNow = plan.ouShrink ?? plan.sOU?.[plan.curIdx] ?? plan.ou ?? 0;
+function OverviewTab({
+  plan,
+  decisions = {},
+  gotBy = {},
+  packages = [],
+  onGoTab,
+  onDecide,
+  onAcceptRec,
+  onRejectRec,
+  onMapRoster,
+  onOpenQueue,
+  onBackPortfolio,
+}) {
+  const hc = plan.hcCur;
+  const hcLast = plan.hcLast || hc;
+  const cls = plan.cls;
+  const clsName = cls?.name || cls?.className || '—';
+  const clsMapped = cls && ['mapped', 'uploaded', 'partial', 'planned'].includes(String(cls.status || '').toLowerCase());
+  const rec = planRec(plan, { gotBy });
+  const shr = shrRec(plan);
+  const attrPast = (plan.sAttr || []).slice(Math.max(0, plan.curIdx - 8), plan.curIdx + 1).filter((v) => v != null);
+  const attrAct = attrPast.length ? attrPast.reduce((a, b) => a + b, 0) / attrPast.length : plan.attr12 || 0;
+  const attrPlan = plan.attr12 || 0;
+  const attrVar = attrAct - attrPlan;
+  const shrDecision = decisions?.shr;
+  const recDecision = decisions?.rec;
+  const planQueued = packages.filter((p) => p.cap_id === plan.capId && !p.done && p.status !== 'rejected').length;
+  const portQueued = packages.filter((p) => !p.done && p.status !== 'rejected').length;
+  const netHc = hc && hcLast ? (Number(hc.closing) || 0) - (Number(hcLast.closing) || 0) : 0;
+
+  const recChip = () => {
+    const st = statusOf(plan);
+    if (st === 'under' || st === 'critical') {
+      return { cls: 'neg', t: `Short ~${f2(rec.gap)} FTE · OT ${f2(rec.otFTE)} + cross-util ${f2(rec.xr)} + hire ${rec.starts}` };
+    }
+    if (weeks12(plan).under >= 2) {
+      return { cls: 'warn', t: `${weeks12(plan).under} of 12 wks short — OT / redistribute` };
+    }
+    if (st === 'surplus') {
+      return { cls: 'good', t: `Surplus — lend up to ${f2(Math.max(0, plan.minOUfwd - 1))} FTE` };
+    }
+    return { cls: '', t: 'On plan — no shortfall weeks' };
+  };
+  const rc = recChip();
+  const shrChip =
+    shr.dir === 'up'
+      ? { cls: 'neg', t: `▲ Raise ${f2(Math.abs(shr.gap))}pt` }
+      : shr.dir === 'down'
+        ? { cls: 'good', t: `▼ Lower ${f2(Math.abs(shr.gap))}pt` }
+        : { cls: '', t: '✓ On plan' };
 
   return (
     <div className="tsec on" data-sec="ov">
-      <div className="card in">
+      <div className="seclist">
+        <div className="secrow" data-sec="hc" onClick={() => onGoTab?.('hc')} role="button" tabIndex={0}>
+          <div className="sec-ic" style={{ background: '#EAF1FA' }}>👥</div>
+          <div className="sec-main">
+            <div className="sec-label">Headcount</div>
+            <div className="sec-body">
+              <span className="mstat"><i>Close · last</i><b>{f2(hcLast?.closing)}</b></span>
+              <span className="mstat"><i>Open · this</i><b>{f2(hc?.opening)}</b></span>
+              <span className="mstat"><i>Close · this</i><b>{f2(hc?.closing)}</b></span>
+              <span className="mstat"><i>Net Δ</i><b className={netHc >= 0 ? 'pos' : 'neg'}>{netHc >= 0 ? '+' : ''}{f2(netHc)}</b></span>
+              <span className="mstat"><i>Attr</i><b>{f2(hc?.attr)}</b></span>
+            </div>
+          </div>
+          <div className="sec-actions">
+            <button type="button" className="arrowbtn" data-step="hc" onClick={(e) => { e.stopPropagation(); onGoTab?.('hc'); }}>→</button>
+          </div>
+        </div>
+
+        <div className="secrow" data-sec="nh" onClick={() => onGoTab?.('nh')} role="button" tabIndex={0}>
+          <div className="sec-ic" style={{ background: '#FDF3E0' }}>🎓</div>
+          <div className="sec-main">
+            <div className="sec-label">New Hire</div>
+            <div className="sec-body">
+              <span className="mstat"><i>Class ref</i><b>{clsName}</b></span>
+              <span className="mstat"><i>Start</i><b>{cls?.date || '—'}</b></span>
+              <span className="mstat"><i>Plan HC</i><b>{f2(cls?.plan)}</b></span>
+              {!clsMapped ? <span className="recchip neg">✕ not uploaded</span> : <span className="recchip good">✓ mapped</span>}
+            </div>
+          </div>
+          <div className="sec-actions">
+            {!clsMapped ? (
+              <button type="button" className="qbtn adj" title="Upload roster" onClick={(e) => { e.stopPropagation(); onMapRoster?.(); }}>⬆</button>
+            ) : null}
+            <button type="button" className="arrowbtn" data-step="nh" onClick={(e) => { e.stopPropagation(); onGoTab?.('nh'); }}>→</button>
+          </div>
+        </div>
+
+        <div className={`secrow ${shrDecision === 'acc' ? 'acc' : ''} ${shrDecision === 'rej' ? 'rej' : ''}`} data-sec="shr">
+          <div className="sec-ic" style={{ background: '#EAF6F1' }}>📉</div>
+          <div className="sec-main">
+            <div className="sec-label">Shrinkage</div>
+            <div className="sec-body">
+              <span className="mstat"><i>Actual · 8wk</i><b>{f2(shr.actAvg)}%</b></span>
+              <span className="mstat"><i>Planned</i><b>{f2(shr.plan)}%</b></span>
+              <span className="mstat"><i>Variance</i><b className={shr.gap > 0 ? 'neg' : 'pos'}>{shr.gap >= 0 ? '+' : ''}{f2(shr.gap)}pt</b></span>
+              <span className={`recchip ${shrChip.cls}`}>{shrChip.t}</span>
+            </div>
+          </div>
+          <div className="sec-actions">
+            <button type="button" className={`qbtn acc ${shrDecision === 'acc' ? 'on' : ''}`} title="Accept" onClick={() => onDecide?.('shr', 'acc')}>✓</button>
+            <button type="button" className={`qbtn rej ${shrDecision === 'rej' ? 'on' : ''}`} title="Reject" onClick={() => onDecide?.('shr', 'rej')}>✕</button>
+            <button type="button" className="qbtn adj" title="Adjust" onClick={() => onGoTab?.('shr')}>✎</button>
+            <button type="button" className="arrowbtn" data-step="shr" onClick={() => onGoTab?.('shr')}>→</button>
+          </div>
+        </div>
+
+        <div className="secrow" data-sec="att" onClick={() => onGoTab?.('att')} role="button" tabIndex={0}>
+          <div className="sec-ic" style={{ background: '#F2F0EA' }}>📊</div>
+          <div className="sec-main">
+            <div className="sec-label">Attrition</div>
+            <div className="sec-body">
+              <span className="mstat"><i>Actual · 8wk</i><b>{f2(attrAct)}%</b></span>
+              <span className="mstat"><i>Planned</i><b>{f2(attrPlan)}%</b></span>
+              <span className="mstat"><i>Variance</i><b className={attrVar > 0 ? 'neg' : 'pos'}>{attrVar >= 0 ? '+' : ''}{f2(attrVar)}pt</b></span>
+              <span className="recchip">{attrVar <= 0 ? '✓ On/below plan' : '▲ Above plan'}</span>
+            </div>
+          </div>
+          <div className="sec-actions">
+            <button type="button" className="arrowbtn" data-step="att" onClick={(e) => { e.stopPropagation(); onGoTab?.('att'); }}>→</button>
+          </div>
+        </div>
+
+        <div className={`secrow ${recDecision === 'acc' ? 'acc' : ''} ${recDecision === 'rej' ? 'rej' : ''}`} data-sec="rec">
+          <div className="sec-ic" style={{ background: '#FEF4DC' }}>⚡</div>
+          <div className="sec-main">
+            <div className="sec-label">Staffing Recommendation</div>
+            <div className="sec-body">
+              <span className={`recchip ${rc.cls}`}>{rc.t}</span>
+            </div>
+          </div>
+          <div className="sec-actions">
+            <button type="button" className={`qbtn acc ${recDecision === 'acc' ? 'on' : ''}`} title="Accept" onClick={() => onAcceptRec?.()}>✓</button>
+            <button type="button" className={`qbtn rej ${recDecision === 'rej' ? 'on' : ''}`} title="Reject" onClick={() => onRejectRec?.()}>✕</button>
+            <button type="button" className="qbtn adj" title="Modify" onClick={() => onGoTab?.('rec')}>✎</button>
+            <button type="button" className="arrowbtn" data-step="rec" onClick={() => onGoTab?.('rec')}>→</button>
+          </div>
+        </div>
+
+        <div className="secrow" data-sec="exec">
+          <div className="sec-ic" style={{ background: '#FDF3E0' }}>🚀</div>
+          <div className="sec-main">
+            <div className="sec-label">Review &amp; execute</div>
+            <div className="sec-body">
+              <span className="mstat"><i>Queued · this plan</i><b>{planQueued}</b></span>
+              <span className="mstat"><i>Queued · portfolio</i><b>{portQueued}</b></span>
+              <span className="recchip">
+                {planQueued ? `${planQueued} package(s) ready` : 'Accept a recommendation above to queue it'}
+              </span>
+            </div>
+          </div>
+          <div className="sec-actions">
+            <button type="button" className="arrowbtn" data-view="port" onClick={() => (portQueued ? onOpenQueue?.() : onBackPortfolio?.())}>→</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card in" style={{ marginTop: 10 }}>
         <div className="ch">
-          <b>Plan overview</b>
-          <span className="tag">step 1</span>
+          <b>Where it breaks</b>
+          <span className="tag">12 weeks forward</span>
         </div>
-        <div className="kpis trend-kpis">
-          <KpiTrendCard
-            heading="Shrinkage · 12wk"
-            value={plan.shrink12}
-            suffix="%"
-            caption="planned trend"
-            color="#2a78d6"
-            values={trends.shrink.values}
-            weeks={trends.shrink.weeks}
-            markIdx={trends.shrink.mark}
-            unit="%"
-          />
-          <KpiTrendCard
-            heading="Attrition · 12wk"
-            value={plan.attr12}
-            suffix="%"
-            caption="production, planned"
-            color="#eb6834"
-            values={trends.attr.values}
-            weeks={trends.attr.weeks}
-            markIdx={trends.attr.mark}
-            unit="%"
-          />
-          <KpiTrendCard
-            heading="Hiring · 12wk"
-            value={plan.hire12}
-            caption="planned new-hire HC"
-            color="#1a9e6a"
-            values={trends.hire.values}
-            weeks={trends.hire.weeks}
-            markIdx={trends.hire.mark}
-            unit="HC"
-          />
-          <KpiTrendCard
-            heading="O/U with shrinkage"
-            value={ouNow}
-            caption={`vs billable ${f2(plan.ou)}`}
-            color={ouNow < 0 ? '#e0483f' : '#1a9e6a'}
-            tone={ouNow < 0 ? 'neg' : 'pos'}
-            values={trends.ou.values}
-            weeks={trends.ou.weeks}
-            markIdx={trends.ou.mark}
-            unit="FTE"
-          />
-        </div>
-        <div className="slabel">FTE over / under — week on week (this week marked)</div>
         <SeriesChart
           weeks={plan.weeks}
           curIdx={plan.curIdx}
@@ -130,6 +254,7 @@ function ForecastTab({ plan, decisions, onDecide, onSubmitForecast }) {
   if (!plan.isVol) {
     return (
       <div className="tsec on" data-sec="fw">
+        <TabPeek tab="fw" />
         <div className="card in">
           <div className="ch">
             <b>Forecast &amp; Workload</b>
@@ -178,6 +303,7 @@ function ForecastTab({ plan, decisions, onDecide, onSubmitForecast }) {
 
   return (
     <div className="tsec on" data-sec="fw">
+      <TabPeek tab="fw" />
       <div className="card in">
         <div className="ch">
           <b>Forecast &amp; AHT</b>
@@ -359,9 +485,11 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
   if (!baseCur) {
     return (
       <div className="tsec on" data-sec="hc">
+        <TabPeek tab="hc" />
         <div className="card in">
           <div className="ch">
-            <b>FTE FLOW</b>
+            <b>Headcount snapshot</b>
+            <span className="tag">last week vs this week</span>
           </div>
           <p>No headcount snapshot for this plan.</p>
         </div>
@@ -377,6 +505,7 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
 
   return (
     <div className="tsec on" data-sec="hc">
+      <TabPeek tab="hc" />
       <div className="hc-strip">
         <div>
           <div className="hc-k">Plan</div>
@@ -430,7 +559,8 @@ function HeadcountTab({ plan, onSaveHeadcount }) {
 
       <div className="card in" ref={tableRef}>
         <div className="ch">
-          <b>FTE FLOW — {plan.plan}</b>
+          <b>Headcount snapshot</b>
+          <span className="tag">last week vs this week</span>
           <button
             type="button"
             className="btn hc-upd"
@@ -535,6 +665,7 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
   if (!cls) {
     return (
       <div className="tsec on" data-sec="nh">
+        <TabPeek tab="nh" />
         <div className="card in">
           <div className="ch">
             <b>New-hire &amp; onboarding</b>
@@ -618,9 +749,10 @@ function NewHireTab({ plan, doneRoster, onMapRoster }) {
 
   return (
     <div className="tsec on" data-sec="nh">
+      <TabPeek tab="nh" />
       <div className={`card ${mapped ? 'good in' : 'warn in'}`}>
         <div className="ch">
-          <b>{mapped ? 'New-hire class' : 'Roster gap — this one does matter'}</b>
+          <b>{mapped ? 'New-hire class' : 'Roster gap — fix the input first'}</b>
           <span className={`chiptag ${mapped ? 'ok' : 'miss'}`}>{stLabel}</span>
         </div>
         {!mapped ? (
@@ -781,10 +913,11 @@ function ShrinkageTab({
 
   return (
     <div className="tsec on" data-sec="shr">
+      <TabPeek tab="shr" />
       <div className="card in">
         <div className="ch">
           <b>Shrinkage trend</b>
-          <span className="tag">drag plan points / accept rec</span>
+          <span className="tag">8-wk actual vs forward plan</span>
         </div>
         <div className="kpis">
           <div className="kpi neg">
@@ -964,10 +1097,11 @@ function AttritionTab({
 
   return (
     <div className="tsec on" data-sec="att">
+      <TabPeek tab="att" />
       <div className="card in">
         <div className="ch">
           <b>Attrition trend</b>
-          <span className="tag">production</span>
+          <span className="tag">production attrition</span>
         </div>
         <div className="kpis">
           <div className="kpi">
@@ -1298,6 +1432,7 @@ function RecommendTab({
   if (dismissed && (st === 'under' || st === 'critical')) {
     return (
       <div className="tsec on" data-sec="rec">
+        <TabPeek tab="rec" />
         <div className="card in">
           <div className="ch">
             <b>Staffing recommendation</b>
@@ -1313,10 +1448,11 @@ function RecommendTab({
 
   return (
     <div className="tsec on" data-sec="rec">
+      <TabPeek tab="rec" />
       <div className="card good in">
         <div className="ch">
           <b>Staffing recommendation</b>
-          <span className="tag">OT → cross-util → hire</span>
+          <span className="tag">sequenced by cost</span>
         </div>
         {doneRoster ? <p style={{ fontSize: '.78rem', color: 'var(--dim)' }}>Roster mapped — gap adjusted before packaging.</p> : null}
         {body}
@@ -1378,10 +1514,11 @@ function ExecuteTab({ plan, doneRec, otWeeks, gotBy, decisions, onOpenQueue, onE
 
   return (
     <div className="tsec on" data-sec="exe">
+      <TabPeek tab="exe" />
       <div className="card in">
         <div className="ch">
           <b>Review &amp; execute</b>
-          <span className="tag">post to CAP-ABILITY</span>
+          <span className="tag">this plan</span>
         </div>
         <div className="kpis">
           <div className="kpi">
@@ -1466,6 +1603,9 @@ export default function PlanTabs({
   onOtWeekChange,
   onExecutePlan,
   onRecOverride,
+  onGoTab,
+  onBackPortfolio,
+  packages = [],
 }) {
   if (!plan) return null;
 
@@ -1477,7 +1617,21 @@ export default function PlanTabs({
 
   return (
     <>
-      {activeTab === 'ov' && <OverviewTab plan={livePlan} />}
+      {activeTab === 'ov' && (
+        <OverviewTab
+          plan={livePlan}
+          decisions={decisions}
+          gotBy={gotBy}
+          packages={packages}
+          onGoTab={onGoTab}
+          onDecide={onDecide}
+          onAcceptRec={onAcceptRec}
+          onRejectRec={onRejectRec}
+          onMapRoster={() => onGoTab?.('nh')}
+          onOpenQueue={onOpenQueue}
+          onBackPortfolio={onBackPortfolio}
+        />
+      )}
       {activeTab === 'fw' && (
         <ForecastTab plan={livePlan} decisions={decisions} onDecide={onDecide} onSubmitForecast={onSubmitForecast} />
       )}
